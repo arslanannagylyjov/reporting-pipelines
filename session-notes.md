@@ -21,9 +21,9 @@
 - Investigated the stale root password: `.bash_history` showed `root`@`localhost` had been set to an **empty password**; confirmed live with a read-only test. Reported to Arslan without changing anything, per instruction not to guess and overwrite.
 - **Root password: fixed and confirmed complete.** Arslan set a real root password directly on athena (Claude never saw or handled the value). `root`@`%` (previously blank) is no longer usable; root access is now `root`@`localhost` only, with a real password. `docker-compose.yml` restored to normal (non-recovery) state. Docs updated accordingly.
 - **ERP (`metabase_ro`) and `reporting_writer` password rotations are still pending** — Arslan will do these himself. Not to be touched by Claude.
+- Deleted `refresh_sales_snapshot.py.bak` from `~/reporting-scripts/` on athena — confirmed removed (`ls` on the path now errors "No such file or directory"). That was the last place the old hardcoded credentials existed in plaintext outside of `.env`.
 
 ### Next steps
 
 - Arslan to rotate the ERP and `reporting_writer` passwords himself; update `docs/credentials.md`/`docs/tables.md` context only if something structural changes, no values.
-- Decide on deleting `refresh_sales_snapshot.py.bak` (still holds old hardcoded credentials in plaintext).
 - Decide whether `scripts/sync_engine.py` should replace `refresh_sales_snapshot.py` going forward.
