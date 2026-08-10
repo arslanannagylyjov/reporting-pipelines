@@ -23,7 +23,25 @@
 - **ERP (`metabase_ro`) and `reporting_writer` password rotations are still pending** — Arslan will do these himself. Not to be touched by Claude.
 - Deleted `refresh_sales_snapshot.py.bak` from `~/reporting-scripts/` on athena — confirmed removed (`ls` on the path now errors "No such file or directory"). That was the last place the old hardcoded credentials existed in plaintext outside of `.env`.
 
-### Next steps
+### Next steps (superseded — see below)
 
 - Arslan to rotate the ERP and `reporting_writer` passwords himself; update `docs/credentials.md`/`docs/tables.md` context only if something structural changes, no values.
-- Decide whether `scripts/sync_engine.py` should replace `refresh_sales_snapshot.py` going forward.
+- Decide whether `scripts/sync_engine.py` should replace `refresh_sales_snapshot.py` going forward — still undecided; second pipeline below followed the existing per-table-script pattern instead.
+
+## 2026-08-10 (continued) — customer_last_price pipeline
+
+Added a second synced table: `customer_last_price` (each customer's last transaction price per product), sourced from a pre-built, pre-deduplicated ERP view `aa_customer_last_price` — no ranking/dedup logic needed in the sync script, unlike `sales_snapshot`.
+
+- **Blocker found and resolved:** `customer_last_price` already existed on `reporting-db`, but `reporting_writer` had zero grants on it (confirmed via error 1142 "SELECT command denied," distinguishing "ungranted" from "doesn't exist" — 1146 would've meant the latter). Reported to Arslan with the exact `GRANT` statement needed; he applied it himself directly on athena (root access, not seen/handled by Claude): `GRANT SELECT, INSERT, DROP ON reporting.customer_last_price TO 'reporting_writer'@'%';`. `DROP` (not `DELETE`) is required because MySQL's `TRUNCATE TABLE` checks the `DROP` privilege.
+- Verified ERP side first, independent of the blocker: view exists, `metabase_ro` already had SELECT, 65,143 rows, column order matches what was specified.
+- Wrote `~/reporting-scripts/refresh_customer_last_price.py` on athena, following the same per-table-script pattern as `refresh_sales_snapshot.py` (same `.env` loader, same `SOURCE`/`DEST` connection dicts and credentials — no new secrets). Full replace, not incremental: `TRUNCATE` + chunked `INSERT` (5,000 rows/batch), no staging table (unnecessary at ~65k rows, per Arslan). Used an explicit column list on the source `SELECT` (rather than literal `SELECT *`) to avoid relying on positional column order — matches how `refresh_sales_snapshot.py` itself is written, and turned out to matter: the target table's physical column order doesn't match the view's.
+- Pre-flight check before the real run: confirmed zero NULLs across all three source PK columns (`Firma`, `HesapKodu`, `StokKodu`) — the target table declares them `NOT NULL` as the primary key, so a NULL would have failed the insert.
+- **Manual run verified end-to-end:** 65,143 rows fetched and inserted (14 batches), matching the ERP view count exactly. `TRUNCATE` succeeded cleanly (first real test of the new `DROP` grant). Spot-checked rows across all three companies (Almer, Cansun, Karacan) — Turkish-character fields, prices, dates, invoice numbers, and `FaturaD_ID` all matched source exactly (an initial mojibake reading was a `mysql` client charset display artifact from omitting `--default-character-set=utf8mb4`, not real corruption — confirmed by re-querying with the flag set). Target schema confirmed sane: PK `(Firma, HesapKodu, StokKodu)`, all 12 view columns present, `FaturaD_ID` correctly widened from source `int` to target `bigint`.
+- Added cron entry: `45 2 * * *` (customer_last_price), kept separate from the `30 2 * * *` sales_snapshot job per instruction — not merged or chained.
+- Updated `docs/tables.md` (new table schema), `docs/server-architecture.md` (cron, data flow, grants, row counts), `docs/credentials.md` (noted the new script reuses the same `.env` credentials, no new secrets), `README.md` (script inventory).
+
+### Next steps
+
+- Metabase UI wiring for `customer_last_price` — Arslan will kick this off himself (Playwright MCP) after reviewing the synced data.
+- ERP/`reporting_writer` password rotation still pending, Arslan's own action item (unchanged from above).
+- `scripts/sync_engine.py` consolidation still undecided — both pipelines now live as separate per-table scripts on athena (`refresh_sales_snapshot.py`, `refresh_customer_last_price.py`), not in this repo.

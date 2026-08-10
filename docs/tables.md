@@ -1,7 +1,5 @@
 # Tables — `reporting` database (reporting-db, athena)
 
-Both tables share the same schema — sales line-item data synced from the ERP (`cansun`) database. Primary key is composite (`ID`, `Firma`).
-
 ## `sales_snapshot`
 
 Durable table Metabase dashboards read from. 675,810 rows as of 2026-08-10.
@@ -45,3 +43,27 @@ Indexes beyond the primary key: `StokKodu`, `Tarih` (both `MUL` — non-unique, 
 ## `sales_staging`
 
 Identical schema to `sales_snapshot`. Transient landing table — each cron run stages a batch of ERP rows here, merges them into `sales_snapshot`, then clears the table. 0 rows is the expected resting state; non-zero rows outside a run window would indicate a failed/interrupted sync.
+
+## `customer_last_price`
+
+Each customer's last transaction price per product, sourced from the pre-built ERP view `aa_customer_last_price` (one row per `Firma`/`HesapKodu`/`StokKodu`, already deduplicated on the ERP side — no ranking logic in the sync script). Full-replace table, not incremental: every run truncates and reloads all rows. 65,143 rows as of the 2026-08-10 verification run (matches the ERP view's row count exactly).
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| Firma | varchar(20) | NO | PRI |
+| HesapKodu | varchar(50) | NO | PRI |
+| StokKodu | varchar(50) | NO | PRI |
+| HesapAciklamasi | varchar(255) | YES | MUL |
+| StokAciklamasi | varchar(500) | YES | |
+| DvzBirimFiyat | decimal(18,4) | YES | |
+| DovizKodu | varchar(10) | YES | |
+| DovizKuru | decimal(18,6) | YES | |
+| BirimFiyat | decimal(18,4) | YES | |
+| BelgeTarihi | date | YES | |
+| BelgeNo | varchar(50) | YES | |
+| FaturaD_ID | bigint | YES | |
+| synced_at | timestamp | YES | DEFAULT CURRENT_TIMESTAMP |
+
+`FaturaD_ID` is `int` on the ERP view side — widened to `bigint` here, which is a safe, intentional mismatch (not a bug). PK columns are non-nullable in the source too (verified 0 NULLs across all three columns at time of sync), so no insert-failure risk there.
+
+Indexes beyond the primary key: `HesapKodu` (`MUL`).
