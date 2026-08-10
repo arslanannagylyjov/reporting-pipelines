@@ -13,7 +13,17 @@
 - Wrote all findings into `docs/server-architecture.md`, `docs/credentials.md`, `docs/tables.md` — locations only, no secret values anywhere in the repo.
 - No `.env` file created in this repo; none planned.
 
+### Credential hardening (same day, later)
+
+- Moved the two application credentials (ERP `metabase_ro`, `reporting_writer`) out of the hardcoded script into `~/reporting-scripts/.env` on athena. Values were written file-to-file on the server and never printed to terminal. Script now loads them via `os.environ` (stdlib-only loader; skipped `python-dotenv` since athena's Python is externally-managed and installing it would've needed `sudo`). Added a `.gitignore` for `.env` in that directory.
+- Verified with a connectivity-only dry run (real connections to both DBs with the new `.env` values, no data mutated) — both succeeded.
+- Found a pre-existing `refresh_sales_snapshot.py.bak` (predates this work) that still has both credentials hardcoded in plaintext. Not deleted — pending Arslan's decision.
+- Investigated the stale root password: `.bash_history` showed `root`@`localhost` had been set to an **empty password**; confirmed live with a read-only test. Reported to Arslan without changing anything, per instruction not to guess and overwrite.
+- **Root password: fixed and confirmed complete.** Arslan set a real root password directly on athena (Claude never saw or handled the value). `root`@`%` (previously blank) is no longer usable; root access is now `root`@`localhost` only, with a real password. `docker-compose.yml` restored to normal (non-recovery) state. Docs updated accordingly.
+- **ERP (`metabase_ro`) and `reporting_writer` password rotations are still pending** — Arslan will do these himself. Not to be touched by Claude.
+
 ### Next steps
 
-- Verify/rotate the `reporting-db` root password so `.env` on athena is actually correct.
-- Decide whether `scripts/sync_engine.py` should replace `refresh_sales_snapshot.py`, and if so, move the two hardcoded DB credentials into an env-var/config pattern consistent with the rest of the stack.
+- Arslan to rotate the ERP and `reporting_writer` passwords himself; update `docs/credentials.md`/`docs/tables.md` context only if something structural changes, no values.
+- Decide on deleting `refresh_sales_snapshot.py.bak` (still holds old hardcoded credentials in plaintext).
+- Decide whether `scripts/sync_engine.py` should replace `refresh_sales_snapshot.py` going forward.

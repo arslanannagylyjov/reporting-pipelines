@@ -51,6 +51,6 @@ GRANT SELECT, INSERT, DELETE, DROP ON `reporting`.`sales_staging` TO `reporting_
 
 `reporting_writer` is scoped to the `reporting` database only — no access elsewhere on the MySQL instance. No `UPDATE` grant on `sales_snapshot`; the sync logic relies on stage-then-merge rather than in-place updates.
 
-## Open item
+## Root account — resolved (2026-08-10)
 
-The `reporting-db` root password currently set in `~/metabase-stack/.env` (`REPORTING_DB_ROOT_PASSWORD`) did **not** authenticate against the running container during this inspection. MySQL only applies `MYSQL_ROOT_PASSWORD` on first volume initialization, so the container's data volume was likely created with an earlier password before the current `.env` value was written. Root access via that `.env` value should not be assumed to work — verify before relying on it.
+The `reporting-db` root password set in `~/metabase-stack/.env` (`REPORTING_DB_ROOT_PASSWORD`) previously did not authenticate against the running container. Investigation found why: `root`@`%` had **no password set at all** at the time. This has since been addressed directly by Arslan on athena — root access is now restricted to `root`@`localhost` (the `root`@`%` account is no longer usable) and protected with a real password. `docker-compose.yml` has been returned to its normal (non-recovery) state.
