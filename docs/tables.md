@@ -67,3 +67,5 @@ Each customer's last transaction price per product, sourced from the pre-built E
 `FaturaD_ID` is `int` on the ERP view side — widened to `bigint` here, which is a safe, intentional mismatch (not a bug). PK columns are non-nullable in the source too (verified 0 NULLs across all three columns at time of sync), so no insert-failure risk there.
 
 Indexes beyond the primary key: `HesapKodu` (`MUL`).
+
+**Data quality note (`DovizKodu`, observed 2026-08-11):** values are inconsistent for the same currency — e.g. some rows have `"EUR"`, at least one has `"EURO"` instead. This is a source data issue on the ERP side (the view/underlying ERP tables), not a bug in the sync pipeline — the sync copies `DovizKodu` verbatim and does no normalization by design. Not fixed here. Anyone building a report that groups, filters, or joins on currency code should normalize/canonicalize `DovizKodu` values (e.g. map `"EURO"` → `"EUR"`) at the report/query layer, or confirm the full set of variant spellings first — don't assume `EUR` is the only spelling in use.

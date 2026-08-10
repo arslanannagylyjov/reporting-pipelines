@@ -62,8 +62,23 @@ Wired `customer_last_price` into Metabase (Playwright MCP driving Chrome, per Ar
 - Saved as **"Müşteri Son Fiyat Sorgusu"** (`/question/56-musteri-son-fiyat-sorgusu`) in "Our analytics."
 - Screenshots taken of the final saved result and the open "Contains..." filter widget, sent to Arslan directly (not committed to the repo — they're point-in-time UI captures, not documentation).
 
+### Next steps (superseded — see below)
+
+- Metabase group/permissions work (creating a sales-team group, inviting users, deciding actual access scope) is still fully open — explicitly deferred by Arslan to a separate decision.
+- ERP/`reporting_writer` password rotation still pending, Arslan's own action item (unchanged from above).
+- `scripts/sync_engine.py` consolidation still undecided.
+
+## 2026-08-11 — add Firma column + DovizKodu data-quality note
+
+- Added `Firma` to "Müşteri Son Fiyat Sorgusu" (`/question/56-musteri-son-fiyat-sorgusu`), positioned right after Müşteri Kodu/Müşteri and before Stok Kodu, per Arslan's request. Edited the SQL editor directly (still a native SQL question, unchanged from how it was built originally), inserted `Firma` into the `SELECT` list in that position, left everything else — the two Field Filter variables (`hesap_kodu`, `hesap_aciklamasi`), the `ORDER BY`, and all existing column renames — untouched.
+- Verified both filters still work **independently** after the change: filtered on Müşteri Kodu = "01730" alone → 443 rows; cleared it, filtered on Müşteri = "ABDALLAH" alone → same 443 rows (same customer, filtered by code vs. by name) — confirms each Field Filter resolves correctly on its own with the other left blank.
+- Saved via "Replace original question" (not save-as-new), so it's still question id 56, same URL.
+- Screenshot taken showing the new column in place; sent to Arslan directly (not committed — same pattern as prior screenshots).
+- **Data quality note added to `docs/tables.md`** under `customer_last_price`: `DovizKodu` has inconsistent values for the same currency (`"EUR"` vs at least one `"EURO"`) — sourced from the ERP view as-is, not normalized by the sync pipeline by design. Documented as a known issue for future report-builders to handle at the query layer; explicitly not fixed in the pipeline or table, per Arslan's instruction not to normalize source data quality issues here.
+
 ### Next steps
 
 - Metabase group/permissions work (creating a sales-team group, inviting users, deciding actual access scope) is still fully open — explicitly deferred by Arslan to a separate decision.
 - ERP/`reporting_writer` password rotation still pending, Arslan's own action item (unchanged from above).
 - `scripts/sync_engine.py` consolidation still undecided.
+- `DovizKodu` normalization (EUR/EURO and possibly other variants) is an open item for whoever next builds a currency-grouped report — not scheduled, just documented.
