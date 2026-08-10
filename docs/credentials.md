@@ -17,6 +17,13 @@ No secret values are recorded in this file or anywhere in this repo, ever — lo
 - **Caveat:** same `refresh_sales_snapshot.py.bak` note as `reporting_writer`, above.
 - **Pending:** rotation — Arslan will perform this himself.
 
+## `metabase_ro` (MySQL user, `reporting-db` container — Metabase's own read connection)
+
+- **For:** the credential Metabase itself uses to connect to `reporting-db` and query `sales_snapshot`/`customer_last_price` for dashboards and questions. Distinct from the ERP `metabase_ro` above (different host, different account) — they share a name only by coincidence/convention, not by being the same credential.
+- **Located:** inside Metabase's own encrypted app-DB (the `metabase-postgres` container), configured via the Metabase admin UI (`Admin → Databases → metabase_reporting_db → Edit connection details`), not in any `.env` file in this repo or in `~/reporting-scripts/`. Discovered/documented on 2026-08-10 while wiring up `customer_last_price` — previously undocumented here.
+- **Grants (on `reporting-db`):** `SELECT` on `sales_snapshot` (pre-existing) and, as of 2026-08-10, `SELECT` on `customer_last_price` (added by Arslan directly, root access, after the new table wasn't visible in Metabase post-sync). No grant on `sales_staging` — intentional, that table is transient/internal and shouldn't be Metabase-visible.
+- **Pending:** exact host mask (`%` vs specific) and password not verified/rotated by Claude — same "Arslan handles this himself" pattern as the other credentials in this file.
+
 ## `reporting-db` MySQL root — `root`@`localhost`
 
 - **For:** root/admin access to the `reporting-db` MySQL container.

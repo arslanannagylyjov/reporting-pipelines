@@ -40,8 +40,30 @@ Added a second synced table: `customer_last_price` (each customer's last transac
 - Added cron entry: `45 2 * * *` (customer_last_price), kept separate from the `30 2 * * *` sales_snapshot job per instruction — not merged or chained.
 - Updated `docs/tables.md` (new table schema), `docs/server-architecture.md` (cron, data flow, grants, row counts), `docs/credentials.md` (noted the new script reuses the same `.env` credentials, no new secrets), `README.md` (script inventory).
 
-### Next steps
+### Next steps (superseded — see below)
 
 - Metabase UI wiring for `customer_last_price` — Arslan will kick this off himself (Playwright MCP) after reviewing the synced data.
 - ERP/`reporting_writer` password rotation still pending, Arslan's own action item (unchanged from above).
 - `scripts/sync_engine.py` consolidation still undecided — both pipelines now live as separate per-table scripts on athena (`refresh_sales_snapshot.py`, `refresh_customer_last_price.py`), not in this repo.
+
+## 2026-08-10 (continued) — Metabase UI wiring for customer_last_price
+
+Wired `customer_last_price` into Metabase (Playwright MCP driving Chrome, per Arslan's explicit instruction to use that instead of the gstack browser skill — gstack needed a one-time Playwright browser binary install that was still running when he redirected).
+
+- **Blocker found and resolved:** after re-syncing the `metabase_reporting_db` schema, `customer_last_price` still didn't appear (neither did `sales_staging`, which normally doesn't need to). Root cause: Metabase's own DB connection to `reporting-db` uses a MySQL user called `metabase_ro` — a distinct, previously undocumented account (not `reporting_writer`, and not the same as the ERP `metabase_ro`, despite the shared name) — which had no grant on the new table. Reported to Arslan with the fix (`GRANT SELECT ON reporting.customer_last_price TO 'metabase_ro'@'%';`); he applied it directly on athena. Re-ran the schema sync afterward and the table appeared (as "Customer Last Price", table id 11). Documented this account in `docs/credentials.md` (new section) — location/purpose only, no values.
+- **Access decision (per Arslan):** confirmed via `admin/people` and `admin/people/groups` that Metabase has exactly one real user (Arslan) and no custom groups — only the two defaults (Administrators, All Users), both containing just him. Since there's no sales-team group to scope permissions to yet, built and saved the question in the root **"Our analytics"** collection (not `Boss Dashboard`, not a new/custom collection) — the collection visible under the default "All Users" permission scope. No group created, no one invited, per explicit instruction.
+- **Question built as a native SQL question**, not the GUI/MBQL notebook editor — this was a deliberate deviation, not literal to how Step 2 was worded. Reason: Metabase's GUI notebook-editor filters bake a fixed value into the saved query at save time; they can't be left open for a viewer to type into afterward outside of a dashboard context. The only way to get two independent, typed, partial-match filter *widgets* on a **single saved question** (dashboards explicitly out of scope) is native SQL with `{{variable}}` Field Filter template tags. Built by starting from the GUI notebook editor (to get exact column selection/order/sort right), then using Metabase's "Convert this question to SQL," then hand-editing the SQL and configuring two Field Filter variables:
+  - `hesap_kodu` → mapped to `HesapKodu`, widget type "String contains", input box, single value, label "Müşteri Kodu"
+  - `hesap_aciklamasi` → mapped to `HesapAciklamasi`, same widget type/shape, label "Müşteri"
+  - Both left with no default and not required, so either can be used independently — verified by filtering on `hesap_kodu=01730` alone (65,143 rows → 443 rows) and clearing it back to unfiltered before saving.
+- Columns: exactly the 7 requested, in the requested order (`HesapKodu, HesapAciklamasi, StokKodu, StokAciklamasi, DvzBirimFiyat, DovizKodu, BelgeTarihi`) — note this required an explicit `SELECT` column list, since the physical table column order differs from the requested display order.
+- Column display labels renamed via visualization settings: HesapKodu → "Müşteri Kodu", HesapAciklamasi → "Müşteri", StokKodu → "Stok Kodu", StokAciklamasi → "Ürün", DvzBirimFiyat → "Fiyat", DovizKodu → "Döviz" (BelgeTarihi left as-is, not in the rename list).
+- Sort: `HesapAciklamasi ASC, StokAciklamasi ASC`, as specified.
+- Saved as **"Müşteri Son Fiyat Sorgusu"** (`/question/56-musteri-son-fiyat-sorgusu`) in "Our analytics."
+- Screenshots taken of the final saved result and the open "Contains..." filter widget, sent to Arslan directly (not committed to the repo — they're point-in-time UI captures, not documentation).
+
+### Next steps
+
+- Metabase group/permissions work (creating a sales-team group, inviting users, deciding actual access scope) is still fully open — explicitly deferred by Arslan to a separate decision.
+- ERP/`reporting_writer` password rotation still pending, Arslan's own action item (unchanged from above).
+- `scripts/sync_engine.py` consolidation still undecided.
