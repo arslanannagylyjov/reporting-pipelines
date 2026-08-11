@@ -82,3 +82,23 @@ Wired `customer_last_price` into Metabase (Playwright MCP driving Chrome, per Ar
 - ERP/`reporting_writer` password rotation still pending, Arslan's own action item (unchanged from above).
 - `scripts/sync_engine.py` consolidation still undecided.
 - `DovizKodu` normalization (EUR/EURO and possibly other variants) is an open item for whoever next builds a currency-grouped report — not scheduled, just documented.
+
+## 2026-08-11 (continued) — silent-failure job monitoring
+
+Built cron job monitoring since there was previously no failure alerting at all: a crashed or silently-not-running job would go unnoticed indefinitely.
+
+- Added `~/reporting-scripts/monitored_jobs.yml` on athena — a small registry (name, script path, cron schedule, expected time) that the report script reads dynamically, so adding a future job means one new entry there plus a `run_job()` call in the new script, nothing in the report logic itself.
+- Added `~/reporting-scripts/job_logging.py`: a stdlib-only (`csv`, no new dependency) helper. `run_job(job_name, func)` times `func()`, appends one row to `~/reporting-scripts/job_runs.csv` (`timestamp, job_name, status, rows, duration_seconds, error_message`), and on a crash logs `fail` with the exception before re-raising — so the existing per-script cron logs (`refresh.log`, `refresh_customer_last_price.log`) still get the full traceback exactly as before, unchanged.
+- Modified both `refresh_sales_snapshot.py` and `refresh_customer_last_price.py` on athena: `main()` now returns its row count instead of nothing, and the `if __name__ == '__main__':` block calls `run_job('sales_snapshot'|'customer_last_price', main)`. No other change to either script's sync logic — same connections, same SQL, same batching.
+- Wrote `~/reporting-scripts/report_job_status.py`: loads the registry, loads today's log entries (latest per job if a job ran more than once), and for each job emits `❌ DID NOT RUN` (no entry today — checked first, the priority case), `❌ FAILED — <error>` (latest entry is `fail`), or `✅ ok — <rows> rows in <duration>s` (latest is `ok`). Failures/missing jobs are listed before successes in one Telegram message, sent via a single HTTP POST to the Bot API using `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the existing `~/reporting-scripts/.env` (same file, same `_load_env` stdlib loader already used by the sync scripts — both variables were already present in `.env`, nothing new added). Added cron entry `0 7 * * *` for it.
+- **All three required scenarios verified live on athena, not just read through:**
+  - Forced failure: ran `refresh_sales_snapshot.py` with `ERP_DB_PASSWORD` overridden to a wrong value via the environment (real `.env` on disk untouched) — crashed with exit 1 and full traceback as before, and logged a `fail` row. Report correctly showed `❌ sales_snapshot: FAILED — ProgrammingError: 1045 ...` ahead of the other job's `✅`.
+  - DID NOT RUN (the priority case, not skipped): commented out `customer_last_price`'s cron line, confirmed via `crontab -l`, then restored it — proving the disable/re-enable round-trips cleanly. Since cron wouldn't actually skip until the next real night, separately reproduced the exact resulting state (no log entry for that job today) by removing its rows from `job_runs.csv`, ran the report, confirmed `❌ customer_last_price: DID NOT RUN today (no log entry)`, then restored the real log from a backup taken before the test.
+  - Clean night: ran both jobs for real (valid credentials), both logged `ok`, report showed both `✅` with correct row counts (65,068 / 65,204) and durations.
+  - All test backups (`.pre-monitoring.bak`, `job_runs.csv.verify.bak`, crontab snapshots) deleted after verification; `job_runs.csv` on athena now reflects only real run history.
+- Documented the whole system in `docs/monitoring.md` (registry format, log schema, how to add a job, verification summary); updated `README.md` and `docs/server-architecture.md` (cron table, file inventory) accordingly. Followed the existing repo convention of keeping live scripts on athena only — `job_logging.py`, `report_job_status.py`, and `monitored_jobs.yml` are not committed here, same as `refresh_sales_snapshot.py`/`refresh_customer_last_price.py` never have been.
+
+### Next steps
+
+- Metabase group/permissions work, ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, and `DovizKodu` normalization — all unchanged/open from above.
+- No monitoring for `report_job_status.py` itself yet (i.e. nothing watches the watcher) — not requested, flagging only as a known gap.

@@ -19,9 +19,10 @@ Two stopped `hello-world` containers also exist (`optimistic_moser`, `gracious_b
 ```
 30 2 * * * /usr/bin/python3 /home/arslan/reporting-scripts/refresh_sales_snapshot.py >> /home/arslan/reporting-scripts/refresh.log 2>&1
 45 2 * * * /usr/bin/python3 /home/arslan/reporting-scripts/refresh_customer_last_price.py >> /home/arslan/reporting-scripts/refresh_customer_last_price.log 2>&1
+0 7 * * * /usr/bin/python3 /home/arslan/reporting-scripts/report_job_status.py >> /home/arslan/reporting-scripts/report_job_status.log 2>&1
 ```
 
-Two scheduled jobs on athena, kept deliberately separate (not chained): `sales_snapshot` at **02:30**, `customer_last_price` at **02:45**.
+Two scheduled jobs on athena, kept deliberately separate (not chained): `sales_snapshot` at **02:30**, `customer_last_price` at **02:45**. A third job, `report_job_status.py` (added 2026-08-11), runs at **07:00** and sends a Telegram summary of the night's runs, flagging any job that failed or never ran at all — see `docs/monitoring.md`.
 
 ## Data flow
 
