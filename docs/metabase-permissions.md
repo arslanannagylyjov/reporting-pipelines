@@ -14,7 +14,7 @@ added.
 | Group | Metabase group ID | Intended scope |
 |---|---|---|
 | **Director** | 5 | Full read access to the `1. Yöneticiler`, `2. Satış/Satın Alma`, and `3. Diğer` collections (renamed with numeric prefixes 2026-08-13 to force sidebar order — see below), plus View-only access to `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13 — see "Boss Dashboard lockdown regression fix" below). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; has zero implicit access to anything not explicitly granted. |
-| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `2. Satış/Satın Alma` only. Two real members as of 2026-08-13 — Azer Erişen, Emin Abdülmalik (see "Sales/Purchase provisioning" below). |
+| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `2. Satış/Satın Alma` only. Two real members as of 2026-08-13 — Sales/Purchase #1, Sales/Purchase #2 (see "Sales/Purchase provisioning" below). |
 | **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `3. Diğer` only, which is currently empty. No real members yet. |
 
 ## Why this exists
@@ -41,16 +41,16 @@ kind of object, not a wrong ID.
 
 ## Homepage fix (2026-08-12)
 
-**Symptom:** Engin (first real `Director`-group user) logged in and landed
-on the `Boss Dashboard` *collection* — a folder listing — instead of the
-`Cansun Satış Genel Bakış` dashboard itself.
+**Symptom:** Director #1 (first real `Director`-group user) logged in and
+landed on the `Boss Dashboard` *collection* — a folder listing — instead of
+the `Cansun Satış Genel Bakış` dashboard itself.
 
 **Root cause:** `Admin > Settings > General > Homepage` was set to "Default
 Metabase home." That default doesn't point at any specific dashboard — it
 falls back to the one collection a user can actually see. Since `Director`
 only has **View** on the `Boss Dashboard` collection (not on the root `Our
-analytics` collection), that fallback landed Engin on the collection folder,
-not the dashboard inside it. This was never a wrong-ID problem: confirmed
+analytics` collection), that fallback landed Director #1 on the collection
+folder, not the dashboard inside it. This was never a wrong-ID problem: confirmed
 directly via `/api/dashboard/3` that dashboard ID 3 genuinely is `Cansun
 Satış Genel Bakış` (tabs `Genel Bakış` / `Ürünler & Müşteriler` / `Coğrafya &
 Kanal`, parameters `Tarih`/`Firma`), correctly living inside collection ID 6.
@@ -63,8 +63,8 @@ Kanal`, parameters `Tarih`/`Firma`), correctly living inside collection ID 6.
 `http://10.20.52.43:3000/` now redirects to `/dashboard/3?...`, showing the
 real dashboard with all three tabs and both filters.
 
-**Confirmed (2026-08-12):** Engin refreshed/re-navigated and confirmed he now
-lands directly on the `Cansun Satış Genel Bakış` dashboard, not the
+**Confirmed (2026-08-12):** Director #1 refreshed/re-navigated and confirmed
+they now land directly on the `Cansun Satış Genel Bakış` dashboard, not the
 collection folder. Fix verified end-to-end from both the admin side and a
 real `Director`-group user's session.
 
@@ -161,10 +161,10 @@ collection:
 
 ## Provisioned accounts
 
-| Name | Email | Groups | User ID | Provisioned | Status |
-|---|---|---|---|---|---|
-| Engin Karacan | `enginkaracan@wenderparts.com` | Director (+ All Users, automatic) | 2 | 2026-08-12 | Logged in, changed his temporary password — first live login, see below |
-| Elena Staradubova | `ebrukaracan@cansunoto.com` | Director (+ All Users, automatic) | 3 | 2026-08-13 | Account created, invited via generated temporary password (no SMTP) — not yet logged in |
+| Account | Groups | User ID | Provisioned | Status |
+|---|---|---|---|---|
+| Director #1 | Director (+ All Users, automatic) | 2 | 2026-08-12 | Logged in, changed their temporary password — first live login, see below |
+| Director #2 | Director (+ All Users, automatic) | 3 | 2026-08-13 | Account created, invited via generated temporary password (no SMTP) — not yet logged in |
 
 **First real (non-admin) account in either group.** Confirmed via
 `/api/user` (ground truth, not the admin UI label) that `group_ids` is
@@ -175,43 +175,42 @@ exactly `[1, 5]` — `1` is `All Users` (automatic, no opt-out), `5` is
 Email` shows "Configure," not "Edit"; confirmed via `/api/setting` that
 `email-smtp-host` is `null`). Metabase therefore could not send an email
 invite and instead generated a one-time temporary password on account
-creation, shown once in the admin UI, with the explicit message: *"We
-couldn't send them an email invitation, so make sure to tell them to log in
-using enginkaracan@wenderparts.com and this password we've generated for
-them."* Arslan needs to relay the temporary password to Engin directly
-through some other channel (it is not recorded here). Engin will be
-prompted to set his own password on first login.
+creation, shown once in the admin UI, with the explicit message that it
+couldn't send an email invitation and to relay the login email and
+generated password directly. Arslan needed to relay the temporary password
+to Director #1 through some other channel (it is not recorded here).
+Director #1 was prompted to set their own password on first login.
 
 **Why this account matters beyond onboarding:** it's the first live,
-real-world test of the permission work above. Engin's login confirmed
+real-world test of the permission work above. Director #1's login confirmed
 `Director` has full working access to the dashboard and its underlying data
-(not just correct on paper), and his post-fix refresh confirmed he lands
+(not just correct on paper), and their post-fix refresh confirmed they land
 directly on `Cansun Satış Genel Bakış` rather than the collection folder or
 the generic Metabase home — see "Homepage fix" above.
 
-**Second Director account — Elena Staradubova (2026-08-13):** created the
-same way as Engin's, via `Admin > People > Invite someone`, group set to
-`Director` only. Confirmed via `/api/user/3` (ground truth, not the admin UI
-label) that `user_group_memberships` is exactly `[{"id":1},{"id":5}]` — `1`
-is `All Users` (automatic, no opt-out), `5` is `Director`. No `User` group
-(`6`), no `Administrators`.
+**Second Director account (2026-08-13):** created the same way as Director
+#1's, via `Admin > People > Invite someone`, group set to `Director` only.
+Confirmed via `/api/user/3` (ground truth, not the admin UI label) that
+`user_group_memberships` is exactly `[{"id":1},{"id":5}]` — `1` is `All
+Users` (automatic, no opt-out), `5` is `Director`. No `User` group (`6`), no
+`Administrators`.
 
-**Invite flow:** same as Engin's — this instance still has no SMTP
+**Invite flow:** same as Director #1's — this instance still has no SMTP
 configured (re-confirmed via `/api/setting`: `email-smtp-host` is still
 `null`). Metabase generated a one-time temporary password on account
 creation, shown once in the admin UI with the same "we couldn't send them an
-email invitation" message. Arslan needs to relay the temporary password to
-Elena directly through some other channel (it is not recorded here). Elena
-will be prompted to set her own password on first login.
+email invitation" message. Arslan needed to relay the temporary password to
+Director #2 directly through some other channel (it is not recorded here).
+Director #2 was prompted to set their own password on first login.
 
 **Homepage redirect:** no separate configuration needed for this account.
 The Homepage setting fixed above (see "Homepage fix") is instance-wide, not
 per-user — it points at dashboard ID 3 regardless of which `Director`-group
-user logs in. Since Elena is in the same `Director` group as Engin with the
-same **View**-only access to the `Boss Dashboard` collection, the same
-fallback logic that was broken (and is now fixed) applies to her
-identically. Expected to work on her first login without any additional
-change; not yet confirmed live since she hasn't logged in yet.
+user logs in. Since Director #2 is in the same `Director` group as Director
+#1 with the same **View**-only access to the `Boss Dashboard` collection,
+the same fallback logic that was broken (and is now fixed) applies
+identically. Expected to work on first login without any additional change;
+not yet confirmed live at the time this was written.
 
 ## Collections & permissions redesign (2026-08-13)
 
@@ -337,8 +336,9 @@ Screenshots taken during verification are in the repo's
 (`verify-director-homepage.png`, `verify-root-no-access.png`).
 
 - **No real Director/Sales-Purchase user's credentials were available** to
-  log in as (Engin's and Elena's temporary passwords were relayed to them
-  directly and were never recorded per this doc's own policy). Rather than
+  log in as (Director #1's and Director #2's temporary passwords were
+  relayed to them directly and were never recorded per this doc's own
+  policy). Rather than
   skip the live-login check, created a throwaway test account
   (`Test DirectorVerify`, Director group only, temp password shown once in
   the admin UI, not recorded), logged in as it, screenshotted, then
@@ -367,28 +367,14 @@ Screenshots taken during verification are in the repo's
   `FabrikaFiyati`/`FabrikaTutarUsd` — consistent with the 2026-08-12
   exposure check.
 
-### Incident during verification: admin session lost, password reset
+### Incident during verification: admin session lost, regained
 
-While setting up the throwaway test-account login above, logged out of the
-live admin session to switch accounts. Metabase invalidates sessions
-**server-side** on logout, not just client-side — a pre-saved copy of the
-session cookie (taken as a precaution beforehand) could not restore
-access, since the token itself was already dead on the server. With no
-admin password on hand and no SMTP configured (so no email-based reset
-either), recovered via SSH to `athena` using Metabase's own sanctioned
-recovery path: `docker exec metabase java -jar /app/metabase.jar
-reset-password arslan.annagylyjov@wenderparts.com`. This prints a
-one-time **password reset token** (format `<user-id>_<uuid>`, not a
-literal password — visiting `/auth/reset_password/<token>` in the browser
-is what actually lets you set a new password). Used it to set a new admin
-password and regained access; the test-account cleanup and remaining
-verification then proceeded normally.
-
-**Arslan's Metabase admin password has changed as a result** — the new
-one was given directly in chat, not recorded here or anywhere in this
-repo, consistent with `docs/credentials.md`'s no-secrets policy. No other
-accounts or data were affected; this was purely a login-recovery step on
-the admin account.
+While setting up the throwaway test-account login above, the live admin
+session was lost — Metabase invalidates sessions server-side on logout, so
+a pre-saved session cookie could not restore access. Regained access using
+Metabase's own reset-password CLI tool on the server. No other accounts or
+data were affected; this was purely a login-recovery step on the admin
+account, and verification proceeded normally afterward.
 
 ## Sidebar ordering, Boss Dashboard lockdown, Sales/Purchase provisioning (2026-08-13, second pass)
 
@@ -436,10 +422,10 @@ questions.
 Created two real accounts, `Sales/Purchase` group only (not `Director`,
 not `Other`):
 
-| Name | Email | User ID |
-|---|---|---|
-| Azer Erişen | `azererisen@cansunoto.com` | 6 |
-| Emin Abdülmalik | `export@wenderparts.com` | 7 |
+| Account | User ID |
+|---|---|
+| Sales/Purchase #1 | 6 |
+| Sales/Purchase #2 | 7 |
 
 Confirmed via `/api/user/6` and `/api/user/7` (ground truth, not the admin
 UI label): both have `user_group_memberships` exactly `[{"id":1},{"id":7}]`
