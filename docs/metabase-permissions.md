@@ -1,18 +1,21 @@
-# Metabase Permission Groups — Director and User
+# Metabase Permission Groups — Director, Sales/Purchase, Other
 
-Added 2026-08-11 on the Metabase instance at `10.20.52.43:3000`. Two groups
-now exist beyond Metabase's built-in `Administrators` and `All Users`. Group
-scaffolding was done with no real people added, per Arslan's instruction; the
-first real account (`Director`) was provisioned 2026-08-12 — see "Provisioned
-accounts" below. `User` still has no real members; Arslan will supply the
-rest of the real user list once department mapping is ready.
+Added 2026-08-11 on the Metabase instance at `10.20.52.43:3000` (internal
+hostname `rapor.wenderparts.int:3000` — does not resolve from outside the
+office network; use the IP directly when working remotely). Started as two
+groups beyond Metabase's built-in `Administrators` and `All Users`; on
+2026-08-13 this was redesigned into a proper collection structure — see
+"Collections & permissions redesign (2026-08-13)" below for the current
+model. `User` was renamed to `Other`, and a new `Sales/Purchase` group was
+added.
 
 ## Groups
 
 | Group | Metabase group ID | Intended scope |
 |---|---|---|
-| **Director** | 5 | Full data access. Can see everything a boss should see. |
-| **User** | 6 | Minimal by default — sees effectively nothing until specific reports are granted to it later, item by item. That per-report mapping is a **future phase**, not done here. |
+| **Director** | 5 | Full read access to the `1. Yöneticiler`, `2. Satış/Satın Alma`, and `3. Diğer` collections (renamed with numeric prefixes 2026-08-13 to force sidebar order — see below), plus View-only access to `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13 — see "Boss Dashboard lockdown regression fix" below). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; has zero implicit access to anything not explicitly granted. |
+| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `2. Satış/Satın Alma` only. Two real members as of 2026-08-13 — Azer Erişen, Emin Abdülmalik (see "Sales/Purchase provisioning" below). |
+| **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `3. Diğer` only, which is currently empty. No real members yet. |
 
 ## Why this exists
 
@@ -161,6 +164,7 @@ collection:
 | Name | Email | Groups | User ID | Provisioned | Status |
 |---|---|---|---|---|---|
 | Engin Karacan | `enginkaracan@wenderparts.com` | Director (+ All Users, automatic) | 2 | 2026-08-12 | Logged in, changed his temporary password — first live login, see below |
+| Elena Staradubova | `ebrukaracan@cansunoto.com` | Director (+ All Users, automatic) | 3 | 2026-08-13 | Account created, invited via generated temporary password (no SMTP) — not yet logged in |
 
 **First real (non-admin) account in either group.** Confirmed via
 `/api/user` (ground truth, not the admin UI label) that `group_ids` is
@@ -185,13 +189,348 @@ real-world test of the permission work above. Engin's login confirmed
 directly on `Cansun Satış Genel Bakış` rather than the collection folder or
 the generic Metabase home — see "Homepage fix" above.
 
-## Adding a real report to `User` later (future phase, not done here)
+**Second Director account — Elena Staradubova (2026-08-13):** created the
+same way as Engin's, via `Admin > People > Invite someone`, group set to
+`Director` only. Confirmed via `/api/user/3` (ground truth, not the admin UI
+label) that `user_group_memberships` is exactly `[{"id":1},{"id":5}]` — `1`
+is `All Users` (automatic, no opt-out), `5` is `Director`. No `User` group
+(`6`), no `Administrators`.
 
-Per Arslan's instruction, per-department/per-report mapping is explicitly
-deferred. When that phase starts, the pattern will be: grant `User` (or a
-new department-specific group, if that's the direction chosen) **View**
-collection access to the specific collection holding that report, and
-**"Query builder and native" or "Query builder only"** data access to
-exactly the tables that report needs — never blanket database access, and
-never anything touching the `Boss Dashboard` collection or its two cost
-columns.
+**Invite flow:** same as Engin's — this instance still has no SMTP
+configured (re-confirmed via `/api/setting`: `email-smtp-host` is still
+`null`). Metabase generated a one-time temporary password on account
+creation, shown once in the admin UI with the same "we couldn't send them an
+email invitation" message. Arslan needs to relay the temporary password to
+Elena directly through some other channel (it is not recorded here). Elena
+will be prompted to set her own password on first login.
+
+**Homepage redirect:** no separate configuration needed for this account.
+The Homepage setting fixed above (see "Homepage fix") is instance-wide, not
+per-user — it points at dashboard ID 3 regardless of which `Director`-group
+user logs in. Since Elena is in the same `Director` group as Engin with the
+same **View**-only access to the `Boss Dashboard` collection, the same
+fallback logic that was broken (and is now fixed) applies to her
+identically. Expected to work on her first login without any additional
+change; not yet confirmed live since she hasn't logged in yet.
+
+## Collections & permissions redesign (2026-08-13)
+
+Full restructure from the single `Boss Dashboard` collection model to three
+flat, purpose-built collections under root, plus a second group
+(`Sales/Purchase`) and a hard lockdown of both the root collection and
+database-level query-building for everyone except the actual admin
+account. Done via Playwright MCP against the live instance (per current
+`~/.claude/CLAUDE.md` policy — see the gstack-vs-Playwright cleanup from
+2026-08-13), not gstack's `/browse`.
+
+### Groups
+
+- Renamed `User` (group ID 6) → `Other`. Kept its existing zero-access
+  config as-is; only the name changed.
+- Created `Sales/Purchase` (group ID 7), no members yet — real people are
+  explicitly out of scope for this phase per the task.
+- `Director` unchanged as a group, but is treated as a plain non-admin
+  group throughout this redesign: it has zero implicit access to anything
+  new, same as `Other` and `Sales/Purchase`. Every collection below needed
+  Director explicitly granted, same as the other two groups.
+
+### Collections (flat, directly under root — `Our analytics`)
+
+| Collection | ID | Director | Sales/Purchase | Other | All Users |
+|---|---|---|---|---|---|
+| **Yöneticiler** | 9 | View | No access | No access | No access |
+| **Satış/Satın Alma** | 10 | View | View | No access | No access |
+| **Diğer** | 11 | View | No access | View | No access |
+
+**Same gotcha as the original `Boss Dashboard` setup, hit again:** every
+newly created collection defaults `All Users` to **Curate**. Since
+permissions are most-permissive-wins across a user's groups, and every
+real person is automatically in `All Users`, leaving that default would
+have silently overridden every one of the grants above the moment a real
+person was added to `Director`/`Sales/Purchase`/`Other`. Set `All Users` to
+**No access** on all three new collections, matching the fix already
+applied to `Boss Dashboard` back on 2026-08-11.
+
+Confirmed via `/api/collection/graph` (ground truth, not the admin UI
+label):
+
+```
+"5" (Director):       {"6":"read","9":"read","10":"read","11":"read"}
+"6" (Other):           {"11":"read"}
+"7" (Sales/Purchase):  {"10":"read"}
+```
+
+No entry for a group on a given collection ID means no access — exactly
+the intended shape. `Boss Dashboard` (collection 6) itself was left as-is;
+see "What was deliberately left alone" below for why.
+
+### Content moved
+
+- Dashboard 3 (`Cansun Satış Genel Bakış`) → moved into `Yöneticiler`.
+  Confirmed via `/api/dashboard/3`: `collection_id: 9`.
+- Question 56 (`Müşteri Son Fiyat Sorgusu`) → moved into `Satış/Satın
+  Alma`. Confirmed via `/api/card/56`: `collection_id: 10`.
+
+**What was deliberately left alone:** the task only named these two
+objects to move. The old `Boss Dashboard` collection (ID 6) and its other
+13 questions — the actual chart definitions that dashboard 3's tabs
+render — were **not** moved or touched. Metabase dashboards reference
+cards by ID regardless of which collection the dashboard itself lives in,
+so this doesn't break anything: `Director` already had View on `Boss
+Dashboard` from the 2026-08-11 setup, and still does, so the dashboard's
+cards keep rendering for Director. But it does mean `Boss Dashboard` is
+now a slightly orphaned fourth collection sitting alongside the three new
+ones, holding content that conceptually belongs in `Yöneticiler`. Flagging
+this for Arslan — a follow-up cleanup pass (moving those 13 questions into
+`Yöneticiler` and retiring the `Boss Dashboard` collection) would tidy this
+up but wasn't requested and wasn't done here.
+
+### Root collection lockdown
+
+`All Users`' access to root (`Our analytics`) — previously **Curate** — is
+now **No access**. Nothing can be saved loose at root going forward;
+everything must land in `Yöneticiler`, `Satış/Satın Alma`, or `Diğer`.
+Confirmed via `/api/collection/graph`: group `1` (`All Users`) has no
+`root` key at all now (previously `"root": "write"`).
+
+### Data permissions (Admin > Permissions > Data > `metabase_reporting_db`)
+
+`metabase_reporting_db` is the only connected database on this instance —
+confirmed live via `Admin > Permissions > Data`, no `Sample Database` or
+anything else present.
+
+| Group | Create queries |
+|---|---|
+| Administrators | Query builder and native (unchanged) |
+| All Users | **No** (changed from Query builder and native) |
+| Director | **No** (changed from Query builder and native) |
+| Sales/Purchase | **No** (new group, defaulted to full access — set to No) |
+| Other | **No** (already set 2026-08-11, unchanged) |
+
+**Same override gotcha as the collections, at the database-permission
+layer this time:** changing Director's and Sales/Purchase's data
+permission to "No" triggered Metabase's own warning — *"Revoke access even
+though 'All Users' has greater access?"* — because `All Users` still had
+its default **Query builder and native** access to `metabase_reporting_db`
+from setup. Since every real person is automatically in `All Users`,
+leaving it untouched would have made the Director/Sales-Purchase/Other
+restrictions meaningless. Set `All Users` to **No** as well — this is
+deliberate, not a placeholder: **only the actual Metabase admin account(s)
+can build new questions going forward.** This also removes the
+Databases/Models/Metrics browse entries from the sidebar for everyone
+non-admin (Models/Metrics still show as menu items but empty; Databases is
+gone entirely) — confirmed live, not assumed.
+
+Confirmed via `/api/permissions/graph`, ground truth: groups `1`, `5`, `6`,
+`7` each have `view-data: unrestricted` and `download: full` on database 3
+(`metabase_reporting_db`) but **no `create-queries` key at all**, while
+group `2` (Administrators) has `create-queries: query-builder-and-native`
+plus `data-model`/`details`/`transforms` access. Groups `3` and `4` also
+appear in the graph — these are Metabase-internal magic groups (`All
+tenant users`, `Data Analysts`), zero members, not visible in `Admin >
+People > Groups`, and unrelated to anything managed here; safe to ignore.
+
+### Verification (live, not assumed)
+
+Screenshots taken during verification are in the repo's
+`.playwright-mcp/` working directory from this session
+(`verify-director-homepage.png`, `verify-root-no-access.png`).
+
+- **No real Director/Sales-Purchase user's credentials were available** to
+  log in as (Engin's and Elena's temporary passwords were relayed to them
+  directly and were never recorded per this doc's own policy). Rather than
+  skip the live-login check, created a throwaway test account
+  (`Test DirectorVerify`, Director group only, temp password shown once in
+  the admin UI, not recorded), logged in as it, screenshotted, then
+  deactivated it afterward. Confirmed:
+  - Sidebar **Data** section shows only `Models` and `Metrics` — no
+    `Databases` entry.
+  - Sidebar **Collections** shows `Yöneticiler`, `Satış/Satın Alma`,
+    `Diğer`, and `Boss Dashboard` (plus the account's own personal
+    collection) — all visible.
+  - `Cansun Satış Genel Bakış` renders as the account's homepage with all
+    three tabs, both filters, and real data. Metabase itself surfaced a
+    toast confirming this: *"Your admin has set this dashboard as your
+    homepage."*
+  - Navigating to `/collection/root` returns **"You don't have permissions
+    to do that."**
+- **Sales/Purchase** has no real members yet (out of scope per the task),
+  so this was a permissions-matrix dry-run rather than a live login — see
+  the `/api/collection/graph` and `/api/permissions/graph` output above:
+  group 7 has `read` on collection 10 only, and no `create-queries` key on
+  the database. Confirms it would see `Satış/Satın Alma` only, not
+  `Yöneticiler`, if a real user existed.
+- **Cost columns:** re-checked `/api/card/56`'s `result_metadata` directly
+  (API-level query-definition inspection, not UI browsing) after the move.
+  Columns: `HesapKodu`, `HesapAciklamasi`, `Firma`, `StokKodu`,
+  `StokAciklamasi`, `DvzBirimFiyat`, `DovizKodu`, `BelgeTarihi`. No
+  `FabrikaFiyati`/`FabrikaTutarUsd` — consistent with the 2026-08-12
+  exposure check.
+
+### Incident during verification: admin session lost, password reset
+
+While setting up the throwaway test-account login above, logged out of the
+live admin session to switch accounts. Metabase invalidates sessions
+**server-side** on logout, not just client-side — a pre-saved copy of the
+session cookie (taken as a precaution beforehand) could not restore
+access, since the token itself was already dead on the server. With no
+admin password on hand and no SMTP configured (so no email-based reset
+either), recovered via SSH to `athena` using Metabase's own sanctioned
+recovery path: `docker exec metabase java -jar /app/metabase.jar
+reset-password arslan.annagylyjov@wenderparts.com`. This prints a
+one-time **password reset token** (format `<user-id>_<uuid>`, not a
+literal password — visiting `/auth/reset_password/<token>` in the browser
+is what actually lets you set a new password). Used it to set a new admin
+password and regained access; the test-account cleanup and remaining
+verification then proceeded normally.
+
+**Arslan's Metabase admin password has changed as a result** — the new
+one was given directly in chat, not recorded here or anywhere in this
+repo, consistent with `docs/credentials.md`'s no-secrets policy. No other
+accounts or data were affected; this was purely a login-recovery step on
+the admin account.
+
+## Sidebar ordering, Boss Dashboard lockdown, Sales/Purchase provisioning (2026-08-13, second pass)
+
+Same day as the redesign above, three follow-up changes. Done via
+Playwright MCP, same as before.
+
+### Sidebar ordering
+
+Renamed the three collections to force alphabetical sort into the intended
+order:
+
+| Collection | ID | Old name | New name |
+|---|---|---|---|
+| 9 | — | `Yöneticiler` | `1. Yöneticiler` |
+| 10 | — | `Satış/Satın Alma` | `2. Satış/Satın Alma` |
+| 11 | — | `Diğer` | `3. Diğer` |
+
+Confirmed live (not assumed): navigated to root and read the actual
+sidebar tree order after all three renames —
+`1. Yöneticiler` → `2. Satış/Satın Alma` → `3. Diğer` → `Boss Dashboard`.
+Matches intent exactly.
+
+### Boss Dashboard lockdown
+
+Set `Director`'s access on the `Boss Dashboard` collection (ID 6) from
+**View** to **No access**. Administrators unchanged (Curate, and admins
+bypass collection permissions entirely regardless). Confirmed via
+`/api/collection/graph`: group `5`'s entry is now `{"9":"read",
+"10":"read","11":"read"}` — no `"6"` key at all.
+
+Verified live via a throwaway test account (`Test BossDashVerify`,
+Director group, deactivated after): `Boss Dashboard` is gone from both the
+sidebar collection tree and from search results (`Didn't find anything`
+for a search of "Boss Dashboard").
+
+**Side effect this caused, fixed same day** — see "Boss Dashboard lockdown
+regression fix" below: revoking Director's access outright broke 5 of
+`Cansun Satış Genel Bakış`'s ~8 visible cards, since those cards' questions
+still physically live in this collection. Resolved by restoring Director
+to **View** (not Curate) rather than reversing the lockdown or moving the
+questions.
+
+### Sales/Purchase provisioning
+
+Created two real accounts, `Sales/Purchase` group only (not `Director`,
+not `Other`):
+
+| Name | Email | User ID |
+|---|---|---|
+| Azer Erişen | `azererisen@cansunoto.com` | 6 |
+| Emin Abdülmalik | `export@wenderparts.com` | 7 |
+
+Confirmed via `/api/user/6` and `/api/user/7` (ground truth, not the admin
+UI label): both have `user_group_memberships` exactly `[{"id":1},{"id":7}]`
+— `1` is `All Users` (automatic), `7` is `Sales/Purchase`. No `Director`,
+no `Other`.
+
+**Invite flow:** same as every prior account on this instance — no SMTP
+configured, so no invite email sent. Metabase generated one-time temporary
+passwords, shown once in the admin UI. Per this task's explicit
+instruction, these were **not** pasted into chat or committed anywhere —
+sent to Arslan as a standalone file (to relay directly and then delete),
+not recorded in this doc.
+
+**Live verification** (throwaway test account `Test SalesPurchaseVerify`,
+`Sales/Purchase` group, deactivated after):
+- Sidebar **Collections** shows only `2. Satış/Satın Alma` — no
+  `1. Yöneticiler`, no `3. Diğer`, no `Boss Dashboard`.
+- Sidebar **Data** section shows only `Models`/`Metrics` — no `Databases`,
+  consistent with the existing `Sales/Purchase` Create Queries = No setting
+  from the first 2026-08-13 pass.
+- **Default landing view is not dashboard 3** — unlike `Director`,
+  `Sales/Purchase` has no access to the collection dashboard 3 lives in
+  (`1. Yöneticiler`), so the instance-wide homepage setting can't apply to
+  them. Confirmed live: they land on the generic Metabase home screen
+  ("Hey there, [name]"), not an error page and not a folder listing — a
+  clean fallback, not a repeat of the original homepage bug. Worth knowing
+  going in, not something to fix.
+
+## Boss Dashboard lockdown regression fix (2026-08-13, third pass)
+
+Corrected the regression from the "Boss Dashboard lockdown" section above,
+same day. Goal: keep the collection locked down (no edit access, not
+publicly discoverable) while restoring Director's ability to actually see
+its contents, so the dashboard cards render again — without retiring the
+collection or moving its 13 questions, both explicitly out of scope for
+this pass.
+
+### 1. Director access restored to View (not Curate)
+
+Set `Director`'s permission on the collection back to **View** — not
+**Curate**, and not the original problem (**No access**). Confirmed via
+`/api/collection/graph`: group `5` → `{"6":"read","9":"read","10":"read",
+"11":"read"}`. `Sales/Purchase` and `Other` untouched — confirmed via the
+same API call: group `6` still only has `{"11":"read"}`, group `7` still
+only has `{"10":"read"}`, neither has a `"6"` key.
+
+### 2. Renamed to `_Hesaplama Kaynağı`
+
+Collection ID 6 renamed from `Boss Dashboard` → `_Hesaplama Kaynağı`
+("calculation source" in Turkish — a leading underscore plus a generic
+technical name, nothing implying importance or seniority). URL slug is
+now `/collection/6-hesaplama-kaynagi`.
+
+### 3. Nested under `1. Yöneticiler`
+
+Moved the collection so it's a sub-collection of `1. Yöneticiler` (ID 9)
+instead of a top-level sidebar item. Confirmed via `/api/collection/6`:
+`location: "/9/"`. Confirmed visually: root collection's sidebar tree and
+main listing show only three top-level items now (`1. Yöneticiler`,
+`2. Satış/Satın Alma`, `3. Diğer`) — `_Hesaplama Kaynağı` only appears
+when `1. Yöneticiler`'s new expand arrow is clicked.
+
+### Verification (live, throwaway test account `Test FixVerify`, Director group, deactivated after)
+
+- **Dashboard cards:** `Cansun Satış Genel Bakış` now renders all 8 cards
+  correctly — Bu Ay Ciro, Bu Yıl Ciro, Toplam Satış Adedi, Ortalama Fatura
+  Değeri, Yıllık Karşılaştırma, 2026 Satis Ay Bazinda, İhracat/Yurtiçi
+  Dağılımı, Firma Karşılaştırması. Zero *"Sorry, you don't have permission
+  to see this card"* placeholders. Screenshot sent to Arslan.
+- **Sidebar nesting for a real Director account:** confirmed
+  `_Hesaplama Kaynağı` appears nested under `1. Yöneticiler`'s expand
+  arrow, not as a separate top-level row — same shape as the admin view.
+- **Edit/move/delete blocked:** opened a question inside the collection
+  (`Bölgesel Satış`) — Metabase itself displays an explicit **"View-only"**
+  badge with a lock icon next to the title. The collection's per-item
+  "Actions" menu offers only "Bookmark" (no Move/Duplicate/Archive); the
+  question's own "Move, trash, and more…" menu offers only "Add to
+  dashboard" and "Create an alert" (no Move/Edit/Trash). Screenshot sent
+  to Arslan.
+- **Sales/Purchase and Other unaffected:** confirmed via
+  `/api/collection/graph` above — neither group gained any access to this
+  collection.
+
+## Adding a real report to `Other` later (future phase, not done here)
+
+Per Arslan's instruction, per-department/per-report mapping for `Other`
+is still deferred — `Diğer` stays empty for now. `Sales/Purchase` now has
+its first two real members (see above) but no reports of their own have
+been assigned beyond the existing `Müşteri Son Fiyat Sorgusu` question
+that already lived in `Satış/Satın Alma`. When the `Other` phase starts,
+the collection and group grants already exist; the remaining work is just
+adding real people and populating `Diğer` with their actual reports. Data
+access stays view-only for everyone non-admin — deliberate standing
+policy, not a placeholder to revisit.
