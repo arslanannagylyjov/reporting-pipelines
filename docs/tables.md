@@ -69,3 +69,29 @@ Each customer's last transaction price per product, sourced from the pre-built E
 Indexes beyond the primary key: `HesapKodu` (`MUL`).
 
 **Data quality note (`DovizKodu`, observed 2026-08-11):** values are inconsistent for the same currency — e.g. some rows have `"EUR"`, at least one has `"EURO"` instead. This is a source data issue on the ERP side (the view/underlying ERP tables), not a bug in the sync pipeline — the sync copies `DovizKodu` verbatim and does no normalization by design. Not fixed here. Anyone building a report that groups, filters, or joins on currency code should normalize/canonicalize `DovizKodu` values (e.g. map `"EURO"` → `"EUR"`) at the report/query layer, or confirm the full set of variant spellings first — don't assume `EUR` is the only spelling in use.
+
+## `supplier_last_purchase`
+
+Each supplier's last purchase per product, sourced from the pre-built ERP view `aa_supplier_last_purchase` (despite the `cansun` schema prefix, this view already UNIONs all three companies — Cansun/Karacan/Almer — distinguished by the `Firma` column; queried once, not once per company). Full-replace table, not incremental — but unlike `customer_last_price`, replace is implemented as upsert-then-prune rather than `TRUNCATE`, because `reporting_writer`'s grant on this table is `SELECT, INSERT, UPDATE, DELETE` (no `DROP`, which `TRUNCATE` requires in MySQL). ~29,300 rows as of the 2026-08-14 verification run (29,351 exactly, matching the ERP view's row count).
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| Firma | varchar(20) | NO | PRI |
+| StokKodu | varchar(50) | NO | PRI |
+| StokAciklamasi | varchar(255) | YES | |
+| HesapKodu | varchar(50) | YES | |
+| HesapAciklamasi | varchar(255) | YES | |
+| BelgeNo | varchar(50) | YES | |
+| GirenMiktar | decimal(18,4) | YES | |
+| Fiyat | decimal(18,2) | YES | |
+| Tarih | datetime | YES | |
+| IslemTipi | varchar(50) | YES | |
+| Seri | varchar(10) | YES | |
+| DovizKuruEvrak | decimal(18,4) | YES | |
+| SyncedAt | datetime | NO | DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP |
+
+Composite primary key on `(Firma, StokKodu)` — one row per supplier product per company, already deduplicated on the ERP side.
+
+**`SyncedAt` timezone note:** this column is written from the `reporting-db` MySQL container's own `NOW()`, which is UTC (the container does not inherit the host's Europe/Istanbul timezone — see `docs/server-architecture.md`). The sync script captures `run_start` from the same `NOW()` call rather than the athena host's local clock specifically to avoid a timezone mismatch between the value written to `SyncedAt` and the value used to identify stale rows for pruning — mixing the two caused every row to be pruned on the first real run (see `docs/monitoring.md`). Don't read `SyncedAt` as Istanbul time.
+
+No cost-column equivalent (`FabrikaFiyati`/`FabrikaTutarUsd`) exists on this table — no exposure decision was needed when adding the Metabase question.

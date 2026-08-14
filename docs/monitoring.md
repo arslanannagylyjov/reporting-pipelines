@@ -20,7 +20,13 @@ jobs:
     script: /home/arslan/reporting-scripts/refresh_customer_last_price.py
     schedule: "45 2 * * *"
     expected_time: "02:45"
+  - name: supplier_last_purchase
+    script: /home/arslan/reporting-scripts/refresh_supplier_last_purchase.py
+    schedule: "0 3 * * *"
+    expected_time: "03:00"
 ```
+
+`supplier_last_purchase` added 2026-08-14, 15 minutes after `customer_last_price` (02:45) — confirmed non-overlapping before adding: both earlier jobs finish in well under a minute (`sales_snapshot` ~19s, `customer_last_price` ~8s per `job_runs.csv`), leaving a wide margin to 03:00.
 
 `report_job_status.py` reads this file and loops over `jobs` — it never
 hardcodes a job name. `name` **must** match the `job_name` string the script
@@ -87,6 +93,39 @@ sent via one HTTP POST to the Telegram Bot API
 `TELEGRAM_CHAT_ID` from `~/reporting-scripts/.env` — same file, same
 stdlib-only loader (`_load_env`) already used by the sync scripts. No new
 `.env` file, no secrets added to this repo.
+
+## `supplier_last_purchase` notification (2026-08-14, per-job, not just the daily digest)
+
+Unlike the daily 07:00 summary above (which covers all jobs together),
+`refresh_supplier_last_purchase.py` also sends its own Telegram message
+immediately after every run, success or failure — reusing the exact same
+bot/token/chat ID from `~/reporting-scripts/.env` (no second bot, no
+duplicate config), via a `send_telegram()` helper copied into the script
+itself, matching this codebase's existing convention of small
+self-contained per-script helpers (`_load_env` is already duplicated the
+same way across every script here) rather than a shared importable module.
+
+Message format:
+
+```
+🆕 Tedarikçi Son Alış Fiyatı sync (supplier_last_purchase)
+Status: ✅ SUCCESS
+Rows: 29351
+Completed: 2026-08-14 20:15:27 (Europe/Istanbul)
+```
+
+(or `❌ FAILED — <ExceptionType>: <message>` on failure). The job name is
+spelled out in full on its own line specifically so it doesn't get confused
+with the other two jobs' one-line entries in the 07:00 digest — this is a
+separate, immediate notification, not a replacement for the digest. The
+completed-at timestamp uses the athena host's own local clock (correctly
+Europe/Istanbul — see `docs/server-architecture.md`), not the `reporting-db`
+container's clock, which is UTC (see the `SyncedAt` timezone note in
+`docs/tables.md`) — don't conflate the two when reading either.
+
+Verified live 2026-08-14: manual run delivered message_id 13 from bot
+`@cansun_reporting_bot` to the same private chat the other two jobs already
+notify.
 
 ## Verified (2026-08-11)
 
