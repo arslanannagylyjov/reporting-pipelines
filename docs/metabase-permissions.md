@@ -520,3 +520,19 @@ the collection and group grants already exist; the remaining work is just
 adding real people and populating `Diğer` with their actual reports. Data
 access stays view-only for everyone non-admin — deliberate standing
 policy, not a placeholder to revisit.
+
+## `Tedarikçi Son Alış Fiyatı` added to `2. Satış/Satın Alma` (2026-08-14)
+
+New native SQL question (card ID 57) against the new `reporting.supplier_last_purchase` table, added to the existing `2. Satış/Satın Alma` collection (ID 10) alongside `Müşteri Son Fiyat Sorgusu` (card 56) — no new collection created, matching Arslan's instruction. Two Field Filter search widgets, same pattern as card 56: `tedarikci_kodu` → `HesapKodu` (Field Filter, "String contains" widget, label "Tedarikçi Kodu") and `tedarikci_adi` → `HesapAciklamasi` (Field Filter, "String contains" widget, label "Tedarikçi"), both "A single value."
+
+**No group permission changes were made** — this addition relies entirely on the existing `2. Satış/Satın Alma` grants from the 2026-08-13 redesign (`Director`: read, `Sales/Purchase`: read, `Other`: no access), which were already correct for this use case. Confirmed via `/api/collection/graph` before adding anything: group `5` (Director) and group `7` (Sales/Purchase) both had `"10":"read"`; group `6` (Other) had no `"10"` key. Nothing needed to change.
+
+No cost-column exposure check was needed — `supplier_last_purchase` has no `FabrikaFiyati`/`FabrikaTutarUsd` equivalent column at all (see `docs/tables.md`).
+
+### Verification (live, two throwaway test accounts, both deactivated after)
+
+Real `Sales/Purchase` members now exist (`Sales/Purchase #1`, `Sales/Purchase #2` — see "Sales/Purchase provisioning" above), but their credentials were never recorded, same policy as every account in this doc. Rather than log into the shared admin browser session as a different user (risks server-side session invalidation — hit this exact problem during the 2026-08-13 verification pass above), verification used the Metabase API directly: created a throwaway `Test SalesPurchaseVerify` (Sales/Purchase group) and a throwaway `Test OtherVerify` (Other group), authenticated each via `POST /api/session` to get an independent session token, and queried with that token — the admin browser session was never touched and stayed logged in throughout.
+
+- **Sales/Purchase test account:** `GET /api/card/57` → **200**, full card definition returned, `collection_id: 10`. `GET /api/collection/10/items` → both `Müşteri Son Fiyat Sorgusu` and `Tedarikçi Son Alış Fiyatı` listed. `GET /api/collection/9/items` (`1. Yöneticiler`, no grant for this group) → **403**, correctly denied.
+- **Other test account:** `GET /api/card/57` → **403**, denied. `GET /api/collection/10/items` → **403**, denied. `GET /api/collection/11/items` (`3. Diğer`, this group's own collection) → **200**, empty list — matches "Diğer stays empty for now" above.
+- Both throwaway accounts deactivated immediately after (`Admin > People > Deactivate user`) — same cleanup discipline as every other test account in this doc.
