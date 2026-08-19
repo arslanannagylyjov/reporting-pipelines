@@ -82,7 +82,7 @@ granted access to specific non-cost reports.
 | `customer_last_price` | Query builder and native | **No** |
 
 `sales_staging` doesn't appear in this list for either group — the
-Metabase-facing `metabase_ro` MySQL account has no grant on it, by design
+Metabase-facing `metabase_reporting_ro` MySQL account has no grant on it, by design
 (see `docs/credentials.md`/`docs/tables.md`), so it's invisible to Metabase
 entirely regardless of group permissions.
 

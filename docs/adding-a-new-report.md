@@ -78,7 +78,7 @@ directly, query `information_schema.table_privileges` as that account, or
 infer it from what actually succeeds/fails when the script runs) before
 writing code that depends on it.
 
-## 5. Grant 3 of 3 — athena reporting-db's *own* `metabase_ro` → `SELECT` on the new table
+## 5. Grant 3 of 3 — athena reporting-db's *own* `metabase_reporting_ro` → `SELECT` on the new table
 
 **This is the grant that gets missed.** It's a *third*, separate MySQL
 account — not the ERP-side `metabase_ro` from step 2, and not the
