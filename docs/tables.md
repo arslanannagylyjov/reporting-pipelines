@@ -117,3 +117,16 @@ Cheque/bond maturity schedule for Cansun and Almer (`Firma` column), sourced fro
 **Composite key note (2026-08-19):** the table's primary key was originally going to be `(Firma, EvrakNo)`, matching this table's original task spec — but that pair turned out **not unique** in the source view: one `EvrakNo` (a single cheque/bond document) can carry several installments, each with its own `BelgeNo`, `VadeTarihi`, and `Tutar`. Verified live before writing any sync code: 222 source rows collapsed to only 70 distinct `(Firma, EvrakNo)` pairs, while `(Firma, BelgeNo)` is fully unique (222/222). Arslan changed the primary key to `(Firma, BelgeNo)` directly on `reporting-db` before the sync script was built, so every installment gets its own row — `REPLACE INTO` on the original key would have silently collapsed each cheque's installments down to one row per sync, discarding real maturity-date data every night. `EvrakNo` remains a plain (non-unique) column, since it's still useful for grouping a cheque's installments together.
 
 **Stale-row note:** `REPLACE INTO` only touches keys present in the current run's source rows — a cheque that drops out of the source view (paid, cancelled, or `cekdurumu` changes) is not pruned from this table and will linger until manually cleaned up. Unlike `supplier_last_purchase`, this table has no prune step (not requested — data delivery only, no business logic).
+
+## `vault_status`
+
+Live snapshot of Cansun's three cash vaults ("kasa"), sourced from the pre-built ERP view `aa_vault_status` on Natra. Full-replace via a single unchunked `REPLACE INTO` — no staging table (that pattern is exclusive to `sales_snapshot`) and no chunking (only 3 rows). Refreshed hourly, 09:00–19:00 daily, by `refresh_vault_status.py`. 3 rows as of the 2026-08-21 verification run, matching the ERP view's row count exactly.
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| KasaKodu | varchar(20) | NO | PRI |
+| KasaAciklamasi | varchar(150) | YES | |
+| para_birimi | varchar(10) | YES | |
+| bakiye | double(20,6) | YES | |
+
+Not in `monitored_jobs.yml` / the 07:00 daily digest — see `docs/monitoring.md` for why, and for the failure-only Telegram alerting this job uses instead.

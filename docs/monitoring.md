@@ -235,6 +235,48 @@ Cron: `30 3 1 * *` — 03:30 on the 1st of the month, chosen after checking
 `job_runs.csv`: the 03:00 and 03:15 jobs both finish in well under 20s, so
 03:30 leaves a wide margin past both, and 07:00 is 3.5 hours later.
 
+## `refresh_vault_status.py` — hourly vault balance sync (2026-08-21)
+
+Lives on athena in `~/reporting-scripts/refresh_vault_status.py` (not in this
+repo), same convention as the other sync scripts. Syncs `reporting.vault_status`
+(3 rows — see `docs/tables.md`) from the ERP view `aa_vault_status` via a single
+unchunked `REPLACE INTO`, no staging table.
+
+Cron: `0 9-19 * * *` — hourly on the hour, 09:00 through 19:00 daily. Confirmed
+no overlap with the 02:30/02:45/03:00/03:15/03:30 jobs — entirely different
+time window.
+
+**Deliberately not in `monitored_jobs.yml`:** the registry + 07:00 digest
+(above) check for *today's* log entry at 07:00 — three hours before this job's
+first run of the day (09:00). Registering it would make every single morning's
+digest falsely report `❌ vault_status: DID NOT RUN today`, since by 07:00 the
+job genuinely hasn't run yet that day. This is a different reason than
+`bump_filter_defaults.py`'s exclusion (monthly vs. daily cadence) but the same
+underlying issue: the registry's daily-freshness check doesn't fit this job's
+schedule.
+
+**Telegram alerting — failure only, not the per-run pattern:** unlike
+`bump_filter_defaults.py` (which sends a message on every run), this job sends
+**only on failure/exception**, prefixed `[vault_status]` so it's unmistakably
+distinct from the other jobs' messages. A success message every run would
+flood the channel at this job's hourly cadence. Uses the same bot
+(`@cansun_reporting_bot`, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the same
+`.env`). Still calls `job_logging.run_job('vault_status', main)` so every run
+(success or failure) lands in `job_runs.csv` for local history/debugging, same
+as `bump_filter_defaults.py` — it's only excluded from the registry that
+drives the 07:00 digest, not from the shared run log.
+
+**Verified (2026-08-21):** manual run loaded 3 rows matching the ERP view
+exactly, logged `status=ok` in `job_runs.csv`, no Telegram message sent (correct
+— success is silent). Forced-failure test (`ERP_DB_PASSWORD` env override, same
+method as the `sales_snapshot` forced-failure test above) crashed with the
+expected `ProgrammingError` 1045, logged `status=fail` with the error detail in
+`job_runs.csv`, exited non-zero, and `send_telegram()`'s `urllib.request.urlopen`
+call did not raise — confirming the `[vault_status]` alert reached the bot
+(same verification method as `bump_filter_defaults.py`'s Telegram check above).
+`vault_status` table contents were unaffected by the forced failure (crashed
+before any write).
+
 ## Verified (2026-08-20)
 
 - Round-tripped a test default (`2026` → `2099` → `2026`) on card 80 and on
