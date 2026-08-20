@@ -195,6 +195,14 @@ collection unless live verification (step 12) actually shows something
 wrong; an existing collection's access was very likely already deliberately
 configured for exactly this purpose.
 
+**Only finished, Director-facing dashboards go directly in
+`1. Yöneticiler`.** Any native SQL question built purely as a component
+for a dashboard card is created directly inside `_Hesaplama Kaynağı` from
+the start — never placed at the top level and moved later. This keeps the
+top level of `1. Yöneticiler` as a short, stable list of the actual
+deliverables (the dashboards themselves), not cluttered with every
+question that happens to feed one of their cards.
+
 If the table has any columns equivalent to known "must stay restricted"
 cost/sensitive columns elsewhere in this database, decide and document
 whether they're exposed by the new question before moving on — don't
