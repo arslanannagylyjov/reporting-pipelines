@@ -95,3 +95,25 @@ Composite primary key on `(Firma, StokKodu)` — one row per supplier product pe
 **`SyncedAt` timezone note:** this column is written from the `reporting-db` MySQL container's own `NOW()`, which is UTC (the container does not inherit the host's Europe/Istanbul timezone — see `docs/server-architecture.md`). The sync script captures `run_start` from the same `NOW()` call rather than the athena host's local clock specifically to avoid a timezone mismatch between the value written to `SyncedAt` and the value used to identify stale rows for pruning — mixing the two caused every row to be pruned on the first real run (see `docs/monitoring.md`). Don't read `SyncedAt` as Istanbul time.
 
 No cost-column equivalent (`FabrikaFiyati`/`FabrikaTutarUsd`) exists on this table — no exposure decision was needed when adding the Metabase question.
+
+## `cheque_bond_maturity`
+
+Cheque/bond maturity schedule for Cansun and Almer (`Firma` column), sourced from the pre-built ERP view `aa_rapor_cek_borc_durum` — a UNION of Cansun's and almer23's own `cek_d`/`cari`/`cek_h` tables, filtered to `EvrakNo LIKE 'BCC%' AND cekdurumu = 13` on the ERP side (not reimplemented in the sync script). Full-replace-by-key table via chunked `REPLACE INTO` (same reason as `supplier_last_purchase` — `reporting_writer` has `SELECT, INSERT, UPDATE, DELETE` but no `DROP`, so `TRUNCATE` isn't available), no staging table. Karacan is intentionally excluded (not present in the source view's UNION). 222 rows as of the 2026-08-19 verification run, matching the ERP view's row count exactly.
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| Firma | varchar(20) | NO | PRI |
+| EvrakNo | varchar(50) | NO | |
+| BelgeNo | varchar(50) | NO | PRI |
+| Tarih | datetime | YES | |
+| VadeTarihi | date | YES | |
+| BelgeBankaKodu | varchar(20) | YES | |
+| BelgeBankaAdi | varchar(100) | YES | |
+| HesapKodu | varchar(20) | NO | |
+| HesapAciklamasi | varchar(255) | YES | |
+| Tutar | decimal(15,2) | YES | |
+| TutarYerel | decimal(15,2) | YES | |
+
+**Composite key note (2026-08-19):** the table's primary key was originally going to be `(Firma, EvrakNo)`, matching this table's original task spec — but that pair turned out **not unique** in the source view: one `EvrakNo` (a single cheque/bond document) can carry several installments, each with its own `BelgeNo`, `VadeTarihi`, and `Tutar`. Verified live before writing any sync code: 222 source rows collapsed to only 70 distinct `(Firma, EvrakNo)` pairs, while `(Firma, BelgeNo)` is fully unique (222/222). Arslan changed the primary key to `(Firma, BelgeNo)` directly on `reporting-db` before the sync script was built, so every installment gets its own row — `REPLACE INTO` on the original key would have silently collapsed each cheque's installments down to one row per sync, discarding real maturity-date data every night. `EvrakNo` remains a plain (non-unique) column, since it's still useful for grouping a cheque's installments together.
+
+**Stale-row note:** `REPLACE INTO` only touches keys present in the current run's source rows — a cheque that drops out of the source view (paid, cancelled, or `cekdurumu` changes) is not pruned from this table and will linger until manually cleaned up. Unlike `supplier_last_purchase`, this table has no prune step (not requested — data delivery only, no business logic).
