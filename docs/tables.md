@@ -130,3 +130,30 @@ Live snapshot of Cansun's three cash vaults ("kasa"), sourced from the pre-built
 | bakiye | double(20,6) | YES | |
 
 Not in `monitored_jobs.yml` / the 07:00 daily digest — see `docs/monitoring.md` for why, and for the failure-only Telegram alerting this job uses instead.
+
+## `vault_movements`
+
+Detailed transaction history behind the three `vault_status` balances, sourced from the pre-built ERP view `aa_vault_movements` on Natra — one row per cash-vault transaction across all three vaults (TL/EUR/USD, distinguished by `KasaKodu`). 1,306 rows as of the 2026-08-21 initial backfill, matching the ERP view's row count exactly; grows daily as new transactions post (no pruning beyond what the hourly/daily syncs themselves do).
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| ID | bigint | NO | PRI |
+| EvrakNo | varchar(50) | YES | |
+| KasaKodu | varchar(20) | NO | MUL |
+| KasaAciklamasi | varchar(150) | YES | |
+| HesapKodu | varchar(50) | YES | |
+| HesapAciklamasi | varchar(255) | YES | |
+| IslemTarihi | datetime | YES | MUL |
+| Aciklama | varchar(500) | YES | |
+| tutar_giren | decimal(18,2) | YES | |
+| tutar_cikan | decimal(18,2) | YES | |
+| HesapTipi | varchar(50) | YES | |
+| DovizKodu | varchar(10) | YES | |
+| DovizKuru | decimal(18,6) | YES | |
+
+Two separate sync jobs, not one, matching this table's two different freshness needs:
+
+- **`refresh_vault_movements_hourly.py`** — hourly, 09:00-19:00 (`5 9-19 * * *`), scoped to the last 3 days: `DELETE FROM vault_movements WHERE IslemTarihi >= (today - 3 days)` then re-inserts that window from the ERP. Never touches older rows.
+- **`refresh_vault_movements_daily.py`** — once daily at 03:30, full replace of all rows via `DELETE FROM vault_movements` (unconditional) then re-insert. **`DELETE`, not `TRUNCATE`** — same reason as `supplier_last_purchase`/`cheque_bond_maturity` above: `reporting_writer` has `SELECT, INSERT, UPDATE, DELETE` on this table but no `DROP`, and `TRUNCATE` requires `DROP` in MySQL. Confirmed live (`1142 DROP command denied`) before writing the script.
+
+Both are failure-only on Telegram (no success ping, given the hourly cadence) — see `docs/monitoring.md` for the full schedule reasoning, collision checks against `vault_status`/`bump_filter_defaults.py`, and the one-time manual backfill that seeded this table before cron took over.

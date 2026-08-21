@@ -277,6 +277,69 @@ call did not raise — confirming the `[vault_status]` alert reached the bot
 `vault_status` table contents were unaffected by the forced failure (crashed
 before any write).
 
+## `refresh_vault_movements_hourly.py` / `refresh_vault_movements_daily.py` — vault movement detail sync (2026-08-21)
+
+Two separate scripts, both on athena in `~/reporting-scripts/` (not in this
+repo), syncing `reporting.vault_movements` (see `docs/tables.md`) from the ERP
+view `aa_vault_movements`. Deliberately two scripts rather than one
+parameterized script, matching this codebase's existing pattern of one script
+per schedule/scope rather than a shared script with a mode flag.
+
+- **`refresh_vault_movements_hourly.py`** — `SELECT * FROM aa_vault_movements
+  WHERE IslemTarihi >= CURDATE() - INTERVAL 3 DAY` from the ERP, then a scoped
+  `DELETE FROM vault_movements WHERE IslemTarihi >= %s` (same 3-day cutoff,
+  computed once in Python and reused for both the source fetch and the
+  destination delete so the two windows can't drift apart) followed by chunked
+  `INSERT` — never touches rows older than 3 days. Cron: `5 9-19 * * *` —
+  hourly, 09:00-19:00, offset 5 minutes past `refresh_vault_status.py`'s `0
+  9-19 * * *` deliberately, so the two hourly jobs' ERP connections don't fire
+  in the same instant even though they hit unrelated tables (zero-cost
+  mitigation, not a fix for a confirmed collision).
+- **`refresh_vault_movements_daily.py`** — full `SELECT * FROM
+  aa_vault_movements` (no date filter), full `DELETE FROM vault_movements`
+  (unconditional) then chunked `INSERT` of every row. **Full replace via
+  `DELETE`, not `TRUNCATE`**, for the same reason as `supplier_last_purchase`/
+  `cheque_bond_maturity` above: `reporting_writer` has `SELECT, INSERT, UPDATE,
+  DELETE` on this table but no `DROP`, and MySQL's `TRUNCATE` requires `DROP`.
+  Confirmed live before writing the script (`TRUNCATE TABLE vault_movements` →
+  `ProgrammingError 1142 (42000): DROP command denied`), not assumed from the
+  other tables' history. Cron: `30 3 * * *` — checked against
+  `bump_filter_defaults.py`'s `30 3 1 * *`: same minute, but that job only
+  fires on the 1st of the month, so on 28 of ~29 days there's no overlap at
+  all, and on the 1st both jobs touch entirely separate systems (this one is
+  MySQL-only, `bump_filter_defaults.py` is Metabase-API-only) — no real
+  collision either way.
+
+**One-time manual backfill:** `refresh_vault_movements_daily.py` was run by
+hand once before the cron entries took over, per this table's spec — 1,306
+rows fetched from `aa_vault_movements`, 0 existing rows deleted (fresh table),
+1,306 rows inserted, matching the ERP view's row count exactly.
+
+**Deliberately not in `monitored_jobs.yml`:** same underlying reason as
+`refresh_vault_status.py` above — the hourly job's first daily run (09:05)
+postdates the 07:00 digest, so registering it would falsely cry `DID NOT RUN`
+every morning. The daily job (03:30) technically could fit the registry's
+daily-freshness check, but was kept out for consistency with its sibling
+hourly script and because both share the same failure-only alerting pattern
+below rather than the digest's ok/fail-every-day pattern.
+
+**Telegram alerting — failure only:** both scripts send a Telegram message
+only on failure/exception, prefixed `[vault_movements_hourly]` and
+`[vault_movements_daily]` respectively — same bot, same `.env`, same reasoning
+as `refresh_vault_status.py` (hourly cadence would flood the channel with
+success pings otherwise). Both call `job_logging.run_job(...)` (job names
+`vault_movements_hourly` / `vault_movements_daily`) so every run lands in
+`job_runs.csv` for local history, independent of the registry/digest.
+
+**Verified (2026-08-21):** both scripts run manually first (backfill above,
+plus a real hourly run afterward) with correct row counts and no Telegram
+message on success. Forced-failure test on each (`ERP_DB_PASSWORD` env
+override, same method as `refresh_vault_status.py`'s test) crashed with the
+expected `ProgrammingError` 1045, logged `status=fail` in `job_runs.csv`,
+exited non-zero, sent the `[vault_movements_hourly]`/`[vault_movements_daily]`
+Telegram alert, and left `vault_movements` unaffected (crashed before any
+write).
+
 ## Verified (2026-08-20)
 
 - Round-tripped a test default (`2026` → `2099` → `2026`) on card 80 and on
