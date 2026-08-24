@@ -286,11 +286,12 @@ parameterized script, matching this codebase's existing pattern of one script
 per schedule/scope rather than a shared script with a mode flag.
 
 - **`refresh_vault_movements_hourly.py`** — `SELECT * FROM aa_vault_movements
-  WHERE IslemTarihi >= CURDATE() - INTERVAL 3 DAY` from the ERP, then a scoped
-  `DELETE FROM vault_movements WHERE IslemTarihi >= %s` (same 3-day cutoff,
+  WHERE IslemTarihi >= CURDATE() - INTERVAL 4 DAY` from the ERP (widened from
+  3 to 4 days on 2026-08-24, per Arslan's request), then a scoped
+  `DELETE FROM vault_movements WHERE IslemTarihi >= %s` (same 4-day cutoff,
   computed once in Python and reused for both the source fetch and the
   destination delete so the two windows can't drift apart) followed by chunked
-  `INSERT` — never touches rows older than 3 days. Cron: `5 9-19 * * *` —
+  `INSERT` — never touches rows older than 4 days. Cron: `5 9-19 * * *` —
   hourly, 09:00-19:00, offset 5 minutes past `refresh_vault_status.py`'s `0
   9-19 * * *` deliberately, so the two hourly jobs' ERP connections don't fire
   in the same instant even though they hit unrelated tables (zero-cost
@@ -339,6 +340,98 @@ expected `ProgrammingError` 1045, logged `status=fail` in `job_runs.csv`,
 exited non-zero, sent the `[vault_movements_hourly]`/`[vault_movements_daily]`
 Telegram alert, and left `vault_movements` unaffected (crashed before any
 write).
+
+**Window widened 3→4 days (2026-08-24):** `refresh_vault_movements_hourly.py`'s
+cutoff changed from `timedelta(days=3)` to `timedelta(days=4)` per Arslan's
+request. `refresh_vault_movements_daily.py` is unaffected — it already does a
+full unconditional replace every night regardless of window, so no backfill
+was needed; the wider window only changes how far back the *hourly* job
+re-syncs during the day. Verified live: a manual run on 2026-08-24 fetched 20
+rows (cutoff `2026-08-20`) vs. 9 rows on the prior cron run under the old
+3-day window (cutoff would have been `2026-08-21`), logged `status=ok` in
+`job_runs.csv`.
+
+## `refresh_cek_senet_portfoy.py` — portfolio çek/senet sync (2026-08-23)
+
+Lives on athena in `~/reporting-scripts/refresh_cek_senet_portfoy.py` (not in
+this repo), same `.env`/connection-handling convention as the other sync
+scripts. Syncs `reporting.cek_senet_portfoy` (10 rows — see `docs/tables.md`)
+from the ERP view `aa_cek_senet_portfoy`.
+
+Cron: `0 9-19/2 * * *` — every 2 hours on the hour, firing at 09:00, 11:00,
+13:00, 15:00, 17:00, 19:00 daily. These are the same top-of-hour slots as
+`refresh_vault_status.py`'s `0 9-19 * * *`, so the two jobs' ERP connections
+do fire simultaneously on those six slots — not offset like
+`vault_movements_hourly` was deliberately offset from `vault_status`. Not
+treated as a real collision: the two jobs hit entirely different source
+views and destination tables, so there's nothing to contend over beyond two
+concurrent read connections to the same ERP box, which it comfortably
+handles (same as the existing 3-way overlap at 03:00-ish already tolerated
+among the nightly jobs).
+
+**Mandatory pre-flight duplicate check, unique to this job:** before
+touching the destination table, the script fetches all source rows and
+does a Python-side `groupby (Firma, CekSiraNo)` (the table's primary key),
+checking for any group with `count > 1`. If found, it raises before any
+`DELETE`/`INSERT` — the exception message states the duplicate-group count
+and that the job aborted, which flows through the normal failure path (see
+below) rather than a bespoke early-exit, so it still lands in `job_runs.csv`
+via `job_logging.run_job`. Rationale (from the task spec): `(Firma,
+CekSiraNo)` being the real primary key is an assumption about the source
+view's shape, and if that assumption is ever wrong, a silent
+`DELETE`+`INSERT` would quietly collapse duplicate rows — this check makes
+that failure loud instead. **Not yet verified against real duplicate data**
+— fabricating a `(Firma, CekSiraNo)` collision would require writing to the
+read-only ERP source, which is out of scope here; the check has been
+verified by code review only (the 10-row live source currently has none).
+
+**`DELETE`, not `TRUNCATE`:** same discovery process as
+`vault_movements_daily` — the spec called for `TRUNCATE`, but the first live
+run failed with `ProgrammingError 1142 (42000): DROP command denied to user
+'reporting_writer'`, confirming `reporting_writer` has no `DROP` grant on
+this table either. Switched to an unconditional `DELETE FROM
+cek_senet_portfoy` (same end state for this small table) before chunked
+`INSERT`, consistent with `supplier_last_purchase`/`cheque_bond_maturity`/
+`vault_movements_daily`. No grants were touched to work around this, per the
+task's constraints.
+
+**Deliberately not in `monitored_jobs.yml`:** same reasoning as
+`vault_status`/`vault_movements_hourly` — the first daily run (09:00)
+postdates the 07:00 digest, so registering it would falsely cry `DID NOT
+RUN` every morning.
+
+**Telegram alerting — failure only (changed 2026-08-24):** originally sent a
+message on both success and failure, per the original task spec's explicit
+instruction — a deliberate deviation from the failure-only pattern used by
+`vault_status`/`vault_movements_hourly`/`vault_movements_daily`. Arslan asked
+for that changed on 2026-08-24 after the every-2-hours success pings became
+noise, so the success-path `send_telegram(...)` call was removed — it now
+matches its siblings exactly: silent on success, alerts only on
+failure/exception, prefixed `[cek_senet_portfoy]`. Same bot
+(`@cansun_reporting_bot`, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the
+same `.env`). Still calls `job_logging.run_job('cek_senet_portfoy', main)`
+so every run (success or failure) lands in `job_runs.csv`, independent of
+the registry/digest.
+
+**Verified (2026-08-23):** manual run loaded 10 rows matching the ERP view
+exactly, logged `status=ok` in `job_runs.csv`, and (under the original
+both-success-and-failure design) sent the `[cek_senet_portfoy] OK: 10 rows
+loaded.` Telegram message. Forced-failure test (`ERP_DB_PASSWORD` env
+override, same method as the other jobs' tests) crashed with the expected
+`ProgrammingError` 1045, logged `status=fail` with the error detail in
+`job_runs.csv`, exited non-zero, and sent the `[cek_senet_portfoy] FAILED:`
+Telegram alert. `cek_senet_portfoy` table contents were unaffected by the
+forced failure (crashed before any write) — reconfirmed at 10 rows
+afterward.
+
+**Re-verified (2026-08-24, after switching to failure-only):** manual run
+loaded 10 rows, logged `status=ok` in `job_runs.csv`, sent **no** Telegram
+message (success is now silent, matching `vault_status`). Forced-failure
+test (same `ERP_DB_PASSWORD` override method) still crashed with the
+expected `ProgrammingError` 1045, logged `status=fail`, exited non-zero, and
+still sent the `[cek_senet_portfoy] FAILED:` Telegram alert — failure
+alerting confirmed intact after the change. Table contents unaffected
+(reconfirmed at 10 rows).
 
 ## Verified (2026-08-20)
 

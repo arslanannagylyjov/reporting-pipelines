@@ -153,7 +153,29 @@ Detailed transaction history behind the three `vault_status` balances, sourced f
 
 Two separate sync jobs, not one, matching this table's two different freshness needs:
 
-- **`refresh_vault_movements_hourly.py`** — hourly, 09:00-19:00 (`5 9-19 * * *`), scoped to the last 3 days: `DELETE FROM vault_movements WHERE IslemTarihi >= (today - 3 days)` then re-inserts that window from the ERP. Never touches older rows.
+- **`refresh_vault_movements_hourly.py`** — hourly, 09:00-19:00 (`5 9-19 * * *`), scoped to the last 4 days (widened from 3 on 2026-08-24): `DELETE FROM vault_movements WHERE IslemTarihi >= (today - 4 days)` then re-inserts that window from the ERP. Never touches older rows.
 - **`refresh_vault_movements_daily.py`** — once daily at 03:30, full replace of all rows via `DELETE FROM vault_movements` (unconditional) then re-insert. **`DELETE`, not `TRUNCATE`** — same reason as `supplier_last_purchase`/`cheque_bond_maturity` above: `reporting_writer` has `SELECT, INSERT, UPDATE, DELETE` on this table but no `DROP`, and `TRUNCATE` requires `DROP` in MySQL. Confirmed live (`1142 DROP command denied`) before writing the script.
 
 Both are failure-only on Telegram (no success ping, given the hourly cadence) — see `docs/monitoring.md` for the full schedule reasoning, collision checks against `vault_status`/`bump_filter_defaults.py`, and the one-time manual backfill that seeded this table before cron took over.
+
+## `cek_senet_portfoy`
+
+Cansun's outstanding cheque/promissory-note ("çek/senet") portfolio, sourced from the pre-built ERP view `aa_cek_senet_portfoy` on Natra. Full-replace-by-key table via a mandatory pre-flight duplicate check (Python-side `groupby (Firma, CekSiraNo)`, abort + Telegram alert + non-zero exit if any group has `count > 1`) followed by chunked `DELETE FROM` + `INSERT` — **`DELETE`, not `TRUNCATE`**, same reason as `supplier_last_purchase`/`cheque_bond_maturity`/`vault_movements_daily`: `reporting_writer` has no `DROP` grant, confirmed live (`1142 DROP command denied`) before switching. 10 rows as of the 2026-08-23 verification run, matching the ERP view's row count exactly.
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| Firma | varchar(10) | NO | PRI |
+| Tur | varchar(10) | NO | |
+| CekSiraNo | int | NO | PRI |
+| EvrakNo | varchar(10) | NO | |
+| BelgeNo | int | YES | |
+| AsilCiro | varchar(10) | NO | |
+| HesapKodu | varchar(20) | NO | |
+| HesapAciklamasi | varchar(150) | YES | |
+| VadeTarihi | date | YES | |
+| TutarYerel | double(20,6) | YES, default 0.000000 | |
+| Seri | char(3) | YES | |
+
+Refreshed every 2 hours, 09:00–19:00 daily, by `refresh_cek_senet_portfoy.py`. Telegram alerting is failure-only (no success ping), same convention as `vault_status`/`vault_movements_*` — see `docs/monitoring.md` for the history (it briefly sent a success message too, per the original task spec, until Arslan asked for failure-only on 2026-08-24), plus the pre-flight duplicate-check design and cron collision check against `vault_status`.
+
+Backs three Metabase questions in `_Hesaplama Kaynağı` ("Portföy Çek Toplamı (TL)", "Portföy Senet Toplamı (TL)", "Portföy Çek/Senet Listesi"), placed on dashboard 3's "Kasa Durumu" tab between the vault scalar cards and the `vault_movements` tables.

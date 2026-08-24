@@ -14,7 +14,7 @@ added.
 | Group | Metabase group ID | Intended scope |
 |---|---|---|
 | **Director** | 5 | Full read access to the `1. Yöneticiler`, `2. Satış/Satın Alma`, and `3. Diğer` collections (renamed with numeric prefixes 2026-08-13 to force sidebar order — see below), plus View-only access to `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13 — see "Boss Dashboard lockdown regression fix" below). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; has zero implicit access to anything not explicitly granted. |
-| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `2. Satış/Satın Alma` only. Two real members as of 2026-08-13 — Sales/Purchase #1, Sales/Purchase #2 (see "Sales/Purchase provisioning" below). |
+| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `2. Satış/Satın Alma` only. Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10 (see "Sales/Purchase provisioning" below). |
 | **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `3. Diğer` only, which is currently empty. No real members yet. |
 
 ## Why this exists
@@ -432,12 +432,55 @@ UI label): both have `user_group_memberships` exactly `[{"id":1},{"id":7}]`
 — `1` is `All Users` (automatic), `7` is `Sales/Purchase`. No `Director`,
 no `Other`.
 
+**Second batch (2026-08-24):** seven more real accounts added, same group
+rule (`Sales/Purchase` only):
+
+| Account | User ID |
+|---|---|
+| Sales/Purchase #3 | 20 |
+| Sales/Purchase #4 | 21 |
+| Sales/Purchase #5 | 22 |
+| Sales/Purchase #6 | 23 |
+| Sales/Purchase #7 | 24 |
+| Sales/Purchase #8 | 25 |
+| Sales/Purchase #9 | 26 |
+
+Confirmed via `/api/user/20` through `/api/user/26`: all seven have
+`user_group_memberships` exactly `[{"id":1},{"id":7}]`, matching #1/#2
+above — no `Director`, no `Other`. Live-verified in the admin UI too
+(Admin > People, screenshot), all seven tagged `Sales/Purchase`.
+
+An eighth candidate account (originally requested for the `Other` group)
+was **deliberately not created** at the same time as the batch above —
+`Other` is a zero-access placeholder per standing project rules, and the
+requester's actual intended access (`Sales/Purchase` vs. genuinely no
+access) was unconfirmed at request time. Arslan confirmed shortly after
+(same day) that this account belongs in `Sales/Purchase`:
+
+| Account | User ID |
+|---|---|
+| Sales/Purchase #10 | 27 |
+
+Confirmed via `/api/user/27`: `user_group_memberships` exactly
+`[{"id":1},{"id":7}]`, same as every other account in this table — no
+`Director`, no `Other`.
+
 **Invite flow:** same as every prior account on this instance — no SMTP
 configured, so no invite email sent. Metabase generated one-time temporary
 passwords, shown once in the admin UI. Per this task's explicit
 instruction, these were **not** pasted into chat or committed anywhere —
 sent to Arslan as a standalone file (to relay directly and then delete),
 not recorded in this doc.
+
+**Second batch (2026-08-24) password handling — deliberately different:**
+Metabase's "Create user" dialog unavoidably auto-generates and displays a
+temporary password immediately on creation (no way to suppress it via the
+stock admin UI); each was immediately superseded via the admin "Reset
+password" action (not "Get reset link") before being used, so the
+creation-time value never mattered. Per Arslan's explicit instruction for
+this batch, the final reset-password values **were** relayed directly in
+chat as a table (not the prior batch's standalone-file method) — still
+never written to this doc, a log file, or committed anywhere.
 
 **Live verification** (throwaway test account `Test SalesPurchaseVerify`,
 `Sales/Purchase` group, deactivated after):
