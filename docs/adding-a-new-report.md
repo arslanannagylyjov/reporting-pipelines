@@ -242,10 +242,24 @@ inferred from "the config looks right":
 
 ## 13. Documentation
 
-Update `docs/tables.md` (schema, source, sync strategy, row-count order of
-magnitude), `docs/monitoring.md` (new cron entry, expected row-count range
-for future anomaly spotting, and the per-job notification if one was
-added), and `docs/metabase-permissions.md` (new question, which collection,
-and explicitly note if no permission changes were made). Redact: no real
-names or emails in any committed doc — use the existing `Director #1/#2`,
-`Sales/Purchase #1/#2` convention if a person needs referencing.
+Update ALL of the following — not a partial subset. This list caused a real
+gap on 2026-08-24 (README.md, server-architecture.md, and session-notes.md
+went three weeks stale while the others below stayed current) because the
+list only used to name three of these six:
+
+- `docs/tables.md` — schema, source, sync strategy, row-count order of
+  magnitude
+- `docs/monitoring.md` — new cron entry, expected row-count range, per-job
+  notification if one was added
+- `docs/metabase-permissions.md` — new question, which collection, and
+  explicitly note if no permission changes were made
+- `docs/server-architecture.md` — add the new cron line to the cron table,
+  add the table to the "Tables" summary, update grants if changed
+- `README.md` — add the new script to the "Server" section's script
+  inventory line
+- `session-notes.md` — append a dated entry for this session, same
+  narrative format as existing entries (what was built, what broke, how it
+  was verified) — don't skip this even for a routine addition
+
+Redact: no real names or emails in any committed doc — use the existing
+`Director #1/#2`, `Sales/Purchase #1/#2` convention.
