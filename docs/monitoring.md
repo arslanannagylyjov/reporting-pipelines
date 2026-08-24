@@ -56,7 +56,7 @@ One CSV row appended per job run, shared by all jobs, written by
 | Field | Meaning |
 |---|---|
 | `timestamp` | Run completion time, `YYYY-MM-DD HH:MM:SS`, Europe/Istanbul (athena host's local clock — see `docs/server-architecture.md`) |
-| `job_name` | Must match a `name` in the registry |
+| `job_name` | The string passed to `run_job(job_name, func)` — written to this log regardless of whether it appears in `monitored_jobs.yml`. Must match a `name` in the registry only if that job wants to be covered by the 07:00 digest below; the intraday jobs (see further down this file) intentionally use a `job_name` that isn't in the registry. |
 | `status` | `ok` or `fail` |
 | `rows` | Row count returned by the job's `main()` (blank on failure) |
 | `duration_seconds` | Wall-clock time of `main()` |
@@ -68,7 +68,19 @@ return value as `rows` on success, or logs `fail` with the exception and
 cron log (`refresh.log` etc.) exactly as before; the structured log is
 additive, not a replacement for that.
 
-All four sync scripts end with:
+Every sync script calls `job_logging.run_job()` the same way, regardless of
+cadence — logging to `job_runs.csv` is universal. Only the four *daily* jobs
+(`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`,
+`cheque_bond_maturity`) are listed in `monitored_jobs.yml` and covered by the
+07:00 digest below. The intraday jobs — `vault_status` (hourly),
+`vault_movements_hourly` (hourly), `vault_movements_daily` (nightly),
+`cek_senet_portfoy` (every 2 hours) — deliberately are **not** in that
+registry, because their first daily run postdates the 07:00 digest and would
+falsely report "DID NOT RUN." They still write to `job_runs.csv` via
+`run_job()` and use their own failure-only Telegram alerting instead (see
+each job's own section further down this file).
+
+The four daily jobs end with the plain form:
 
 ```python
 if __name__ == '__main__':
@@ -77,10 +89,18 @@ if __name__ == '__main__':
 ```
 
 `main()` itself is unchanged except that it now `return`s the total row
-count instead of nothing. No other sync logic was touched. This is also the
-*only* place any of these scripts touch Telegram — as of 2026-08-19, none of
-them send a per-job message themselves; see "Per-job Telegram notification
-removed" below.
+count instead of nothing. No other sync logic was touched.
+
+**Telegram note, corrected:** as of 2026-08-19 (when this section was
+written), none of the then-four sync scripts sent a per-job Telegram message
+themselves — `run_job()` was the only place any of them touched logging, and
+nothing touched Telegram. That's no longer true instance-wide: every job
+added since (`vault_status`, `vault_movements_hourly`,
+`vault_movements_daily`, `cek_senet_portfoy`) wraps its `run_job()` call in
+its own `try`/`except` and calls `send_telegram()` directly on failure — see
+each job's own section further down this file for the exact message format
+and the "Per-job Telegram notification removed" section below for why the
+original four still don't.
 
 ## Report — `report_job_status.py`
 

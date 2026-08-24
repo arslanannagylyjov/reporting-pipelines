@@ -76,6 +76,13 @@ granted access to specific non-cost reports.
 
 ## Data permissions (Admin > Permissions > Data > `metabase_reporting_db`)
 
+**Superseded 2026-08-13 — see "Collections & permissions redesign"
+below.** Per-table data access is no longer how this works: Create
+Queries is now set to No for every non-admin group on the whole
+database, and exposure is controlled entirely by which native SQL
+questions exist in which collection. This table is kept for history
+only.
+
 | Table | Director | User |
 |---|---|---|
 | `sales_snapshot` | Query builder and native | **No** |
