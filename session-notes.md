@@ -250,7 +250,7 @@ Added `refresh_cek_senet_portfoy.py`, syncing `reporting.cek_senet_portfoy` (10 
 - **Password-handling preference confirmed for this batch:** Metabase's admin UI has no "type an arbitrary password" flow for an admin — only "Reset password" (admin sees the generated value) or "Get reset link" (only the user ever sees it). Arslan confirmed he's fine with "Reset password" and wants the resulting table relayed directly in chat at the end (not a standalone file, which was the prior batch's method) — noted as a standing preference to check against, not assumed automatically next time.
 - Updated `docs/metabase-permissions.md`, `docs/monitoring.md`, `docs/tables.md` to reflect all of the above; committed and pushed together.
 
-### Next steps
+### Next steps (superseded — see below)
 
 - ERP/`reporting_writer` password rotation — still pending, Arslan's own action item, unchanged since 2026-08-10.
 - Container timezone fix (Metabase/MySQL still on UTC internally) — still pending Arslan's go-ahead and a low-usage window, unchanged since 2026-08-12.
@@ -258,3 +258,23 @@ Added `refresh_cek_senet_portfoy.py`, syncing `reporting.cek_senet_portfoy` (10 
 - `DovizKodu` normalization (EUR/EURO variants) — still open, unscheduled.
 - `Other`/`Diğer` real-report rollout — still deferred; scaffolding exists, no real members or reports yet.
 - No monitoring for `report_job_status.py`, `bump_filter_defaults.py`, or any of the intraday/failure-only jobs' own health (i.e. nothing watches these watchers) — known gap, not requested.
+
+## 2026-08-25 — stock_details pipeline, Manager group and collection, doc-staleness fixes
+
+Ran the full spec end-to-end: a new nightly sync pipeline, a new Metabase group/collection, and a documentation-checklist expansion prompted by the 08-24 backfill gap.
+
+**`stock_details` pipeline:** synced `reporting.stock_details` (40,104 rows, full stock/product catalog with pricing/supplier/dimension columns) from ERP view `cansun.aa_rapor_stok_listesi`. Verified live before assuming the spec's grant claim: `reporting_writer` genuinely has `DROP` on this table (unlike everything added since `cheque_bond_maturity`), so the script uses plain `TRUNCATE` + chunked `INSERT`, matching `customer_last_price`'s pattern. `StkoKodu` confirmed unique on the live source (40,104/40,104 distinct) before skipping a pre-flight duplicate check. Cron'd `45 3 * * *`, registered in `monitored_jobs.yml` as the fifth daily-digest job (no standalone Telegram — covered by the existing 07:00 digest). Manual run verified: 40,104 rows in 6.66s, logged `ok`.
+
+**Manager group and `2. Manager` collection:** hit a real discrepancy before building anything — the task assumed a `Manager` group already existed with Nursiman as a member; live state showed neither was true (no `Manager` group at all, Nursiman a real `Sales/Purchase`-only member). Flagged it and asked rather than guessing; Arslan chose to create `Manager` fresh and add Nursiman to it *in addition to* his existing `Sales/Purchase` membership. Created the group (ID 8), added Nursiman, then created `2. Manager` (collection ID 35) as a flat peer of the other numbered collections — not nested like `_Hesaplama Kaynağı`. This collection's `All Users` defaulted to No access on creation (not the Curate-by-default gotcha every prior collection hit) — set Director/Manager to View explicitly anyway rather than trust that the favorable default will hold next time. Renumbered `2. Satış/Satın Alma`→`3.` and `3. Diğer`→`4.` (same IDs, name only) to make room; confirmed via a before/after `/api/collection/graph` diff that the renames touched only names, not permissions.
+
+Built `Stok Listesi` (card 103), a deliberate full-detail placeholder — every `stock_details` column including the cost column `FabrikaFiyatiUsd`, with the column-exposure decision explicitly deferred to a future pass. Verified live with three throwaway test accounts over independent API sessions (never touching the admin browser session): Director-only → 200, Manager+Sales/Purchase (matching Nursiman's actual real group set, not a naive "Manager only") → 200, Sales/Purchase-only → 403 on both the card and the collection — confirms the cost column doesn't leak. All three throwaway accounts deactivated immediately after.
+
+**Unrelated finding, not acted on:** several older throwaway test accounts (`Test ChequeVerify*`, `Test TabsVerify*`, `Test TakipMoveVerify*`) are still active with real recent logins, despite this project's own deactivate-after-use convention. Flagged in `docs/metabase-permissions.md` for Arslan to decide on separately — out of scope for this task.
+
+**Documentation:** updated all six files per the (now-expanded) Step 13 checklist in `docs/adding-a-new-report.md` — `docs/tables.md`, `docs/monitoring.md`, `docs/metabase-permissions.md`, `docs/server-architecture.md`, `README.md`, and this entry.
+
+### Next steps
+
+- Old throwaway test accounts (`Test ChequeVerify*`/`TabsVerify*`/`TakipMoveVerify*`) — still active, flagged but not deactivated; Arslan's call on whether/when to clean up.
+- `stock_details` column exposure (which columns `Stok Listesi` should actually show, given `FabrikaFiyatiUsd`) — explicit future decision, not made here.
+- ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.

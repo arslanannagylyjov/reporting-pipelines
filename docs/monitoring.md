@@ -28,11 +28,17 @@ jobs:
     script: /home/arslan/reporting-scripts/refresh_cheque_bond_maturity.py
     schedule: "15 3 * * *"
     expected_time: "03:15"
+  - name: stock_details
+    script: /home/arslan/reporting-scripts/refresh_stock_details.py
+    schedule: "45 3 * * *"
+    expected_time: "03:45"
 ```
 
 `supplier_last_purchase` added 2026-08-14, 15 minutes after `customer_last_price` (02:45) — confirmed non-overlapping before adding: both earlier jobs finish in well under a minute (`sales_snapshot` ~19s, `customer_last_price` ~8s per `job_runs.csv`), leaving a wide margin to 03:00.
 
 `cheque_bond_maturity` added 2026-08-19, 15 minutes after `supplier_last_purchase` (03:00) — same margin reasoning: all three earlier jobs finish in well under 20s each, and the new job itself ran in 0.19s on its first live run (222 source rows), so 03:15 leaves a wide margin. Worth reconfirming actual runtime after a few real cron cycles rather than treating 03:15 as permanently final, per usual practice when adding a job here.
+
+`stock_details` added 2026-08-25, 30 minutes after `cheque_bond_maturity` (03:15) — checked `job_runs.csv` for `refresh_vault_movements_daily.py`'s recent runs (the job occupying the neighboring 03:30 slot) before picking 03:45: it consistently finishes in ~0.25s, so 15 minutes past it is a wide margin. This is now the fifth job in the registry — the daily digest covers five jobs, not four.
 
 `report_job_status.py` reads this file and loops over `jobs` — it never
 hardcodes a job name. `name` **must** match the `job_name` string the script
@@ -69,23 +75,23 @@ cron log (`refresh.log` etc.) exactly as before; the structured log is
 additive, not a replacement for that.
 
 Every sync script calls `job_logging.run_job()` the same way, regardless of
-cadence — logging to `job_runs.csv` is universal. Only the four *daily* jobs
+cadence — logging to `job_runs.csv` is universal. Only the five *daily* jobs
 (`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`,
-`cheque_bond_maturity`) are listed in `monitored_jobs.yml` and covered by the
-07:00 digest below. The intraday jobs — `vault_status` (hourly),
-`vault_movements_hourly` (hourly), `vault_movements_daily` (nightly),
-`cek_senet_portfoy` (every 2 hours) — deliberately are **not** in that
-registry, because their first daily run postdates the 07:00 digest and would
-falsely report "DID NOT RUN." They still write to `job_runs.csv` via
+`cheque_bond_maturity`, `stock_details`) are listed in `monitored_jobs.yml`
+and covered by the 07:00 digest below. The intraday jobs — `vault_status`
+(hourly), `vault_movements_hourly` (hourly), `vault_movements_daily`
+(nightly), `cek_senet_portfoy` (every 2 hours) — deliberately are **not** in
+that registry, because their first daily run postdates the 07:00 digest and
+would falsely report "DID NOT RUN." They still write to `job_runs.csv` via
 `run_job()` and use their own failure-only Telegram alerting instead (see
 each job's own section further down this file).
 
-The four daily jobs end with the plain form:
+The five daily jobs end with the plain form:
 
 ```python
 if __name__ == '__main__':
     from job_logging import run_job
-    run_job('sales_snapshot', main)  # or 'customer_last_price', 'supplier_last_purchase', 'cheque_bond_maturity'
+    run_job('sales_snapshot', main)  # or 'customer_last_price', 'supplier_last_purchase', 'cheque_bond_maturity', 'stock_details'
 ```
 
 `main()` itself is unchanged except that it now `return`s the total row
@@ -452,6 +458,46 @@ expected `ProgrammingError` 1045, logged `status=fail`, exited non-zero, and
 still sent the `[cek_senet_portfoy] FAILED:` Telegram alert — failure
 alerting confirmed intact after the change. Table contents unaffected
 (reconfirmed at 10 rows).
+
+## `refresh_stock_details.py` — nightly stock/product catalog sync (2026-08-25)
+
+Lives on athena in `~/reporting-scripts/refresh_stock_details.py` (not in
+this repo), same `.env`/connection-handling convention as every other sync
+script. Syncs `reporting.stock_details` (40,104 rows — see `docs/tables.md`)
+from the ERP view `cansun.aa_rapor_stok_listesi`.
+
+Cron: `45 3 * * *` — nightly, 30 minutes after `cheque_bond_maturity` and 15
+minutes after `refresh_vault_movements_daily.py` (the job in the neighboring
+03:30 slot), which consistently finishes in ~0.25s per `job_runs.csv` —
+confirmed before finalizing the time, not assumed safe.
+
+**`TRUNCATE`, not `DELETE`+`INSERT`:** unlike every table added since
+`cheque_bond_maturity`, `reporting_writer` genuinely has `DROP` on
+`stock_details` — confirmed live via `SHOW GRANTS FOR CURRENT_USER()`
+before writing the script, not assumed from the newer tables' pattern. So
+this job uses the simpler `TRUNCATE` + chunked `INSERT` shape, matching
+`customer_last_price`'s pattern instead of the DROP-less tables' `DELETE`.
+
+**No pre-flight duplicate check needed:** `StkoKodu` (the primary key) was
+confirmed unique on the live source view before writing the script
+(`COUNT(*) = COUNT(DISTINCT StkoKodu)`, both 40,104) — unlike
+`cek_senet_portfoy`, there's no fragile multi-column key assumption here to
+guard against.
+
+**Registered in the daily digest, no standalone Telegram:** this is a
+nightly job on the same cadence as the original four, so it was added to
+`monitored_jobs.yml` (see above) rather than given its own
+`send_telegram()` call — the 07:00 digest covers it like
+`sales_snapshot`/`customer_last_price`/`supplier_last_purchase`/
+`cheque_bond_maturity`.
+
+**Verified (2026-08-25):** manual run fetched and loaded 40,104 rows,
+matching the ERP view's row count exactly, in 6.66s; logged `status=ok` in
+`job_runs.csv`. Column list and placeholder counts (31 each) checked to
+match exactly between the `SELECT` and `INSERT` statements before the run,
+per this project's explicit-column-list convention. Destination row count
+and a 3-row spot check confirmed directly against `reporting-db` after the
+run.
 
 ## Verified (2026-08-20)
 

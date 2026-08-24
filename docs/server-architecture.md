@@ -23,16 +23,17 @@ Two stopped `hello-world` containers also exist (`optimistic_moser`, `gracious_b
 15 3 * * *      /usr/bin/python3 /home/arslan/reporting-scripts/refresh_cheque_bond_maturity.py >> /home/arslan/reporting-scripts/refresh_cheque_bond_maturity.log 2>&1
 30 3 * * *      /usr/bin/python3 /home/arslan/reporting-scripts/refresh_vault_movements_daily.py >> /home/arslan/reporting-scripts/refresh_vault_movements_daily.log 2>&1
 30 3 1 * *      /usr/bin/python3 /home/arslan/reporting-scripts/bump_filter_defaults.py >> /home/arslan/reporting-scripts/bump_filter_defaults.log 2>&1
+45 3 * * *      /usr/bin/python3 /home/arslan/reporting-scripts/refresh_stock_details.py >> /home/arslan/reporting-scripts/refresh_stock_details.log 2>&1
 0 7 * * *       /usr/bin/python3 /home/arslan/reporting-scripts/report_job_status.py >> /home/arslan/reporting-scripts/report_job_status.log 2>&1
 0 9-19 * * *    /usr/bin/python3 /home/arslan/reporting-scripts/refresh_vault_status.py >> /home/arslan/reporting-scripts/refresh_vault_status.log 2>&1
 5 9-19 * * *    /usr/bin/python3 /home/arslan/reporting-scripts/refresh_vault_movements_hourly.py >> /home/arslan/reporting-scripts/refresh_vault_movements_hourly.log 2>&1
 0 9-19/2 * * *  /usr/bin/python3 /home/arslan/reporting-scripts/refresh_cek_senet_portfoy.py >> /home/arslan/reporting-scripts/refresh_cek_senet_portfoy.log 2>&1
 ```
 
-Ten scheduled jobs on athena as of 2026-08-24, grown from the original two — each was added incrementally alongside a new synced table; see `docs/monitoring.md` and `session-notes.md` for the history and reasoning behind each addition's cron time. Grouped by cadence:
+Eleven scheduled jobs on athena as of 2026-08-25, grown from the original two — each was added incrementally alongside a new synced table; see `docs/monitoring.md` and `session-notes.md` for the history and reasoning behind each addition's cron time. Grouped by cadence:
 
-- **Nightly batch (02:30–03:30):** `sales_snapshot` → `customer_last_price` → `supplier_last_purchase` → `cheque_bond_maturity` → `vault_movements_daily`, each offset ~15 minutes past the previous based on that job's own observed run duration (all finish in well under a minute). `bump_filter_defaults.py` shares the 03:30 slot but only actually fires on the 1st of the month.
-- **07:00 daily digest:** `report_job_status.py` sends one Telegram summary covering only the four jobs registered in `monitored_jobs.yml` (`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`, `cheque_bond_maturity`) — see `docs/monitoring.md` for why every other job below is deliberately excluded from that registry (their schedules don't fit a "ran once overnight" daily-freshness check) and instead use failure-only or per-run Telegram alerting of their own.
+- **Nightly batch (02:30–03:45):** `sales_snapshot` → `customer_last_price` → `supplier_last_purchase` → `cheque_bond_maturity` → `vault_movements_daily` → `stock_details`, each offset ~15 minutes past the previous based on that job's own observed run duration (all finish in well under a minute, `stock_details` itself in ~7s for 40k rows). `bump_filter_defaults.py` shares the 03:30 slot but only actually fires on the 1st of the month.
+- **07:00 daily digest:** `report_job_status.py` sends one Telegram summary covering only the five jobs registered in `monitored_jobs.yml` (`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`, `cheque_bond_maturity`, `stock_details`) — see `docs/monitoring.md` for why every other job below is deliberately excluded from that registry (their schedules don't fit a "ran once overnight" daily-freshness check) and instead use failure-only or per-run Telegram alerting of their own.
 - **Intraday, 09:00–19:00:** `vault_status` (hourly), `vault_movements_hourly` (hourly, offset 5 minutes past `vault_status` so their ERP connections don't fire in the same instant), `cek_senet_portfoy` (every 2 hours, same top-of-hour slots as `vault_status` — confirmed harmless, since the two hit entirely different source views/destination tables).
 
 ## System timezone fix (2026-08-12)
@@ -90,6 +91,7 @@ See `docs/tables.md` for full schema and current row counts (each table's own "a
 | `vault_status` | 3 (2026-08-21) | Live snapshot of the three cash vault balances, hourly `REPLACE INTO` |
 | `vault_movements` | 1,306+ (2026-08-21 backfill, grows daily) | Vault transaction history behind `vault_status`, two sync jobs (hourly window + nightly full replace) |
 | `cek_senet_portfoy` | 10 (2026-08-23) | Outstanding çek/senet portfolio (full-replace-by-key with a pre-flight duplicate check) |
+| `stock_details` | 40,104 (2026-08-25) | Full stock/product catalog, pricing/supplier/dimensions, `TRUNCATE`-based nightly replace |
 
 ## Grants — `reporting_writer`
 
@@ -102,7 +104,9 @@ GRANT SELECT, INSERT, DROP ON `reporting`.`customer_last_price` TO `reporting_wr
 
 `reporting_writer` is scoped to the `reporting` database only — no access elsewhere on the MySQL instance. No `UPDATE` grant on `sales_snapshot`; the sync logic relies on stage-then-merge rather than in-place updates. `customer_last_price` needs `DROP` (not `DELETE`) because `TRUNCATE TABLE` checks the `DROP` privilege in MySQL — this grant was applied by Arslan directly on athena on 2026-08-10 (root access, not seen or handled by Claude).
 
-**Every table added since (`supplier_last_purchase`, `cheque_bond_maturity`, `vault_status`, `vault_movements`, `cek_senet_portfoy`) has `SELECT, INSERT, UPDATE, DELETE` but no `DROP`** — confirmed live for each one via a failed `TRUNCATE` attempt (`1142 (42000): DROP command denied`) before its sync script was written to use `DELETE`+`INSERT`, `REPLACE INTO`, or upsert-then-prune instead (see `docs/tables.md` for which strategy each table uses). No grants have been changed to work around this on any of them.
+**Every table added between `cheque_bond_maturity` and `cek_senet_portfoy` has `SELECT, INSERT, UPDATE, DELETE` but no `DROP`** — confirmed live for each one via a failed `TRUNCATE` attempt (`1142 (42000): DROP command denied`) before its sync script was written to use `DELETE`+`INSERT`, `REPLACE INTO`, or upsert-then-prune instead (see `docs/tables.md` for which strategy each table uses). No grants have been changed to work around this on any of them.
+
+**`stock_details` is the exception:** `reporting_writer` genuinely has `DROP` on this table (confirmed live via `SHOW GRANTS`, applied during the account's earlier rename work — not something this pipeline requested), so its sync script uses plain `TRUNCATE` + chunked `INSERT` like `customer_last_price`, not the DROP-less pattern above. Don't assume every table added after `cheque_bond_maturity` lacks `DROP` — check the actual grant before picking a replace strategy, per `docs/adding-a-new-report.md` Step 3.
 
 ## Root account — resolved (2026-08-10)
 

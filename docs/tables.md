@@ -179,3 +179,45 @@ Cansun's outstanding cheque/promissory-note ("çek/senet") portfolio, sourced fr
 Refreshed every 2 hours, 09:00–19:00 daily, by `refresh_cek_senet_portfoy.py`. Telegram alerting is failure-only (no success ping), same convention as `vault_status`/`vault_movements_*` — see `docs/monitoring.md` for the history (it briefly sent a success message too, per the original task spec, until Arslan asked for failure-only on 2026-08-24), plus the pre-flight duplicate-check design and cron collision check against `vault_status`.
 
 Backs three Metabase questions in `_Hesaplama Kaynağı` ("Portföy Çek Toplamı (TL)", "Portföy Senet Toplamı (TL)", "Portföy Çek/Senet Listesi"), placed on dashboard 3's "Kasa Durumu" tab between the vault scalar cards and the `vault_movements` tables.
+
+## `stock_details`
+
+Full stock/product catalog (pricing, supplier, physical dimensions, cost columns), sourced from the pre-built ERP view `cansun.aa_rapor_stok_listesi` on Natra via `metabase_ro`. Full-replace via `TRUNCATE` + chunked `INSERT` — unlike every table added since `cheque_bond_maturity`, `reporting_writer` genuinely has `DROP` on this one (confirmed live via `SHOW GRANTS`, not assumed), so `TRUNCATE` is valid here. `StkoKodu` is the primary key, confirmed unique on both the source view and destination table (40,104/40,104 distinct, live-checked before writing the sync script — no pre-flight duplicate check needed, unlike `cek_senet_portfoy`). 40,104 rows as of the 2026-08-25 verification run, matching the ERP view's row count exactly.
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| Sira | varchar(50) | YES | |
+| StkoKodu | varchar(30) | NO | PRI |
+| KompleAdi | varchar(200) | YES | |
+| FullName | varchar(200) | YES | |
+| RU | varchar(250) | YES | |
+| Birim | varchar(10) | YES | |
+| ReklamKodu | varchar(50) | YES | |
+| UrunAdi | varchar(50) | YES | |
+| DovizKodu | varchar(20) | YES | |
+| Cns_Eur | double(20,6) | YES | |
+| Cns_Usd | double(20,6) | YES | |
+| Trk_Usd | double(20,6) | YES | |
+| FabrikaFiyatiUsd | double(20,6) | YES | |
+| Barkod | varchar(60) | YES | |
+| AnaGrup | varchar(50) | YES | |
+| AltGrup | varchar(50) | YES | |
+| Kategori | varchar(50) | YES | |
+| UreticiKodu | varchar(100) | YES | |
+| Arac | varchar(50) | YES | |
+| Marka | varchar(50) | YES | |
+| AracTipi | varchar(50) | YES | |
+| OncekiKod | varchar(100) | YES | |
+| TedarikciKodu | varchar(50) | YES | |
+| TedarikciAdi | varchar(150) | YES | |
+| TedarikciGrup | varchar(14) | NO | |
+| StoklanmaTuru | varchar(50) | YES | |
+| Agirlik | double(14,6) | YES | |
+| Hacim | double(14,6) | YES | |
+| En | double(14,2) | YES | |
+| Boy | double(14,2) | YES | |
+| Yukseklik | double(14,2) | YES | |
+
+**Cost-column note:** `FabrikaFiyatiUsd` is a cost column, same category as `sales_snapshot`'s `FabrikaFiyati`/`FabrikaTutarUsd`. The Metabase question built on this table (`Stok Listesi`, card 103) exposes it as part of a deliberate full-detail placeholder — see `docs/metabase-permissions.md` for the collection/permission scoping that keeps it restricted to `Director` and `Manager` only, and the standing note that which columns to actually show is a future decision, not made here.
+
+Refreshed nightly at 03:45 by `refresh_stock_details.py`, registered in `monitored_jobs.yml` and covered by the 07:00 daily digest — see `docs/monitoring.md`.

@@ -13,9 +13,10 @@ added.
 
 | Group | Metabase group ID | Intended scope |
 |---|---|---|
-| **Director** | 5 | Full read access to the `1. Yöneticiler`, `2. Satış/Satın Alma`, and `3. Diğer` collections (renamed with numeric prefixes 2026-08-13 to force sidebar order — see below), plus View-only access to `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13 — see "Boss Dashboard lockdown regression fix" below). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; has zero implicit access to anything not explicitly granted. |
-| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `2. Satış/Satın Alma` only. Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10 (see "Sales/Purchase provisioning" below). |
-| **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `3. Diğer` only, which is currently empty. No real members yet. |
+| **Director** | 5 | Full read access to `1. Yöneticiler`, `2. Manager`, `3. Satış/Satın Alma`, and `4. Diğer` (renumbered 2026-08-25 to make room for `2. Manager` — see "Manager group and collection" below; originally numbered 1/2/3 as of 2026-08-13), plus View-only access to `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13 — see "Boss Dashboard lockdown regression fix" below). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; has zero implicit access to anything not explicitly granted. |
+| **Manager** | 8 | Added 2026-08-25. Read access to `2. Manager` only. One real member as of 2026-08-25 — Nursiman (also a `Sales/Purchase` member; see "Manager group and collection" below). |
+| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `3. Satış/Satın Alma` only (renumbered from `2.` on 2026-08-25). Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10 (see "Sales/Purchase provisioning" below). |
+| **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `4. Diğer` only (renumbered from `3.` on 2026-08-25), which is currently empty. No real members yet. |
 
 ## Why this exists
 
@@ -624,3 +625,65 @@ Arslan renamed the tab from `Takip` to `Çek-Senet Takip` shortly after this —
 **Verified live:** all 7 cards' `Vade Tarihi` header confirmed (via `/api/card/:id/query` column names and a dashboard screenshot) — no card still shows `Tarih`. Dates render as e.g. `1/8/2026` instead of `August 1, 2026`. Checked the actual dashboard rendering (not just the standalone question view, since that's where the original width complaint was): for all 7 monthly table `dashcard`s on `Çek-Senet Takip`, the table grid's `scrollWidth` exactly equals its `clientWidth` (1031px = 1031px) — **no horizontal scrollbar is needed or present**; the narrower format fully resolved it, not just reduced it. `Genel Bakış` (8 cards), `Ürünler & Müşteriler` (3), and `Coğrafya & Kanal` (2) card counts confirmed unchanged — this task only edited cards 72–78's own `dataset_query`/`visualization_settings`, never touched `/api/dashboard/3/cards`.
 
 **Standard template going forward:** any future rebuild of these monthly cards (e.g. when the range needs regenerating) should use `` ds.calendar_date AS `Vade Tarihi` `` from the start and apply both `table.column_formatting` (color range on `ToplamTutar`) and `column_settings` (`date_style: "D/M/YYYY"` on `Vade Tarihi`) at creation time, in the same collection (`1. Yöneticiler`) at full dashboard width (`size_x: 24`) — no manual fixup pass needed afterward.
+
+## Manager group and collection, `2. Manager` renumbering, `Stok Listesi` question (2026-08-25)
+
+New group, new peer collection, and a full-detail placeholder question against the new `stock_details` table. Done via Playwright MCP against the live instance, confirmed as the correct tool before proceeding, per standing project policy.
+
+### Discrepancy found before building anything
+
+The task spec assumed a `Manager` Metabase group already existed with Nursiman as a real member. Live state showed neither was true: `Admin > People > Groups` listed only `Administrators`, `All Users`, `Director`, `Other`, `Sales/Purchase` — no `Manager` — and Nursiman (user ID 20, the account previously documented as `Sales/Purchase #3`) was confirmed via `/api/user/20` to be a member of `All Users` and `Sales/Purchase` only. Flagged this rather than guessing which of three plausible interpretations was intended (create `Manager` empty and leave Nursiman alone; move him into `Manager` in place of `Sales/Purchase`; or add him to `Manager` in addition to `Sales/Purchase`). Arslan chose the third: create the group, then add Nursiman to it as a real member while keeping his existing `Sales/Purchase` membership. His group set after this change: `All Users`, `Sales/Purchase`, `Manager` — confirmed via `/api/user/20` (`user_group_memberships`: `[{"id":1},{"id":7},{"id":8}]`).
+
+### Group created
+
+`Manager` (group ID 8), created empty via `Admin > People > Groups > Create a group`, then Nursiman added as its first and only real member via `Admin > People > Groups > Manager > Add members`.
+
+### `2. Manager` collection created
+
+New collection, flat directly under root (`Our analytics`) — a peer of the other numbered collections, not nested like `_Hesaplama Kaynağı`. Confirmed via the "Collection it's saved in" field defaulting to `Our analytics` at creation time, not assumed.
+
+Permissions set explicitly (not left at whatever the creation default happened to be):
+
+| Group | Access |
+|---|---|
+| Administrators | Curate (unchanged, built-in) |
+| All Users | No access |
+| Director | View |
+| Manager | View |
+| Sales/Purchase | No access |
+| Other | No access |
+
+**Gotcha check, this time negative:** every prior collection in this project (`Boss Dashboard`, then `Yöneticiler`/`Satış/Satın Alma`/`Diğer`) defaulted `All Users` to **Curate** on creation, requiring an explicit fix each time. `2. Manager` did not repeat this — it was created with `All Users` already at **No access**, likely because this Metabase version now has new collections inherit the (already-locked-down) root collection's effective default rather than a hardcoded Curate. Set `Director` and `Manager` to View explicitly regardless of what the default happened to be, and did not rely on the observed default holding true next time either — confirm live on any future collection, don't assume either behavior.
+
+Confirmed via `/api/collection/graph` (ground truth, not the admin UI label), before/after diff against the pre-existing graph: revision stayed at 14, and only two new entries appeared — group `5` (Director) gained `"35":"read"`, group `8` (Manager) got `"35":"read"` — no other group's entries for any other collection changed.
+
+### Renumbering
+
+To make `2. Manager` sit as a peer between `1. Yöneticiler` and the sales/other collections, the other two were renamed (same collection IDs, name only — no permission or content changes):
+
+| Collection | ID | Old name | New name |
+|---|---|---|---|
+| 10 | — | `2. Satış/Satın Alma` | `3. Satış/Satın Alma` |
+| 11 | — | `3. Diğer` | `4. Diğer` |
+
+Confirmed live: sidebar tree reads `1. Yöneticiler` → `2. Manager` → `3. Satış/Satın Alma` → `4. Diğer`, matching intent exactly. Confirmed via `/api/collection/graph` before/after the renames that the permission graph was byte-for-byte identical (same revision 14, same group→collection mappings) — the renames touched only the `name` field, exactly as expected, not assumed.
+
+### `Stok Listesi` question created
+
+Native SQL question (card ID 103), `SELECT * FROM stock_details ORDER BY Sira` (`ORDER BY Sira` added same day, per Arslan's request, via "Replace original question" — same card ID, same collection) — every column, no exclusions. Saved directly into `2. Manager` (the collection picker's remembered-last-collection default was `3. Satış/Satın Alma`; had to explicitly reselect `2. Manager` rather than accepting the default). Confirmed via `/api/card/103`: `collection_id: 35`, query text matches exactly. Note: `Sira` is a nullable `varchar`, so rows with a NULL `Sira` sort first under plain ascending order — not fixed here since only the ordering itself was requested.
+
+**Deliberate full-detail placeholder, not a finished report:** this question exposes every `stock_details` column including the cost column `FabrikaFiyatiUsd`, same category as `sales_snapshot`'s `FabrikaFiyati`/`FabrikaTutarUsd`. Which columns should actually be shown/hidden for this audience is an explicit future decision, not made here — the collection-level permission scoping (Director + Manager only, everyone else No access) is what currently stands between this cost column and anyone who shouldn't see it, not a query-level restriction. Documented here so a future column-exposure pass has a clear starting point, matching how `docs/tables.md` also flags this.
+
+### Verification (live, throwaway test accounts + independent API sessions, not the admin browser session)
+
+Three test accounts created, each authenticated via `POST /api/session` for its own token — the admin browser session was never touched:
+
+- **Director group only:** `GET /api/card/103` → `200`, `GET /api/collection/35/items` → `200`.
+- **Manager + Sales/Purchase** (constructed to match Nursiman's actual real group set, confirmed above, not naively "Manager only"): `GET /api/card/103` → `200`, `GET /api/collection/35/items` → `200`.
+- **Sales/Purchase only:** `GET /api/card/103` → `403`, `GET /api/collection/35/items` → `403` — confirms `FabrikaFiyatiUsd` does not leak to `Sales/Purchase`, consistent with this project's standing cost-column policy.
+
+Admin session (API-key-based, superuser) confirmed unaffected throughout via `/api/user/current`. All three throwaway accounts deactivated immediately after (`Admin > People > Deactivate user`), confirmed via `/api/user/<id>` (`is_active: false` on all three) — same cleanup discipline as every other test account in this doc.
+
+### Unrelated finding during this pass, not acted on
+
+Several throwaway test accounts from earlier sessions (`Test ChequeVerifyDirector`/`Other`/`SalesPurchase`, `Test TabsVerifyDirector`/`SalesPurchase`, `Test TakipMoveVerifyDirector`/`SalesPurchase`) are still active with real recent login timestamps, despite this doc's own stated convention of deactivating throwaway accounts immediately after use. Not deactivated as part of this task — out of scope, flagged for Arslan to decide whether to clean up separately.
