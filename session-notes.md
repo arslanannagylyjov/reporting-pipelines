@@ -114,8 +114,147 @@ athena's system clock was set to `Etc/UTC`, so every cron job (`30 2`, `45 2`, `
 - Considered scheduling a cloud routine (via the `/schedule` skill) to verify tomorrow's 07:00–07:15 Istanbul Telegram delivery automatically, but stopped before creating it: cloud routines run in Anthropic's sandboxed cloud infra with no access to local SSH keys or private networks, and athena is only reachable via the SSH key on Arslan's Mac — a cloud agent couldn't have reached it at all. Verification will instead happen the normal way, via SSH from this same environment, next time the conversation resumes after 2026-08-13 07:15 Istanbul.
 - Updated `docs/server-architecture.md` with a new "System timezone fix" section covering the problem, the fix, the pre-change investigation, and the unresolved container-timezone follow-up.
 
-### Next steps
+### Next steps (superseded — see below)
 
 - **Verify tomorrow's real cron cycle** (2026-08-13, after 07:15 Istanbul): check `job_runs.csv` timestamps for `sales_snapshot`/`customer_last_price` land in the 02:30–03:00ish Istanbul window (not 05:30), check `report_job_status.log` for a ~07:00 Istanbul run, and confirm the Telegram message itself arrived 07:00–07:15 Istanbul, not 10:00. Explicitly deferred — no manual test run, per instruction.
 - Container timezone fix (Metabase/MySQL still on UTC internally) — needs `docker-compose.yml` changes and a container restart; needs Arslan's go-ahead and a low-usage window before scheduling.
 - Metabase group/permissions work, ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, and `DovizKodu` normalization — all unchanged/open from above.
+
+## 2026-08-12 (continued) — Metabase permission groups: Director/User, Boss Dashboard lockdown, cost-column exposure check
+
+Added the first Metabase permission groups beyond the built-ins (`Administrators`, `All Users`): `Director` (group 5) and `User` (group 6, later renamed `Other`) — full detail in `docs/metabase-permissions.md`.
+
+- `Director`: kept Metabase's default full ("Query builder and native") data access on `sales_snapshot`/`customer_last_price` — already matched the intended scope. `User`: explicitly set to "No" query-building access on both tables (the default would otherwise have been full access).
+- Locked down the `Boss Dashboard` collection: `Director` → View, `User` → No access. **Found and fixed a real gap before it mattered:** `All Users` (every account's automatic group, no opt-out) had `Curate` (full edit) by default on this collection — since Metabase permissions are most-permissive-wins across a user's groups, this would have silently overridden `User`'s restriction the moment a real non-director person was added. Set `All Users` to No access.
+- **Cost-column exposure check:** confirmed `FabrikaFiyati`/`FabrikaTutarUsd` (the two cost columns that must stay boss-only) aren't reachable from anywhere else in the instance — searched all collections/questions/trash for "Fabrika" (zero hits) and separately pulled every card's actual query definition via `/api/card/<id>`, since a GUI question's column selection wouldn't show up in a text search. All 14 cards then in the collection confirmed clean.
+- Pure Metabase-side permission/collection work via Playwright MCP — no `.env` or credential changes.
+
+## 2026-08-12 (continued) — homepage redirect bug found and fixed on first Director login
+
+Director #1 (first real non-admin account, user ID 2) logged in and landed on the `Boss Dashboard` **collection** (a folder listing) instead of the `Cansun Satış Genel Bakış` **dashboard** (ID 3) that lives inside it.
+
+- **Root cause:** `Admin > Settings > General > Homepage` was set to "Default Metabase home," which falls back to whichever collection a user can see — since `Director` only had View on the collection, not the root, that landed them on the folder instead of the dashboard. Confirmed dashboard ID 3 genuinely is `Cansun Satış Genel Bakış` before assuming this was a wrong-ID problem — it wasn't.
+- **Fix:** set Homepage to Dashboard → `Cansun Satış Genel Bakış`. Verified via `/api/setting` (`custom-homepage: true`, `custom-homepage-dashboard: 3`) and confirmed live with Director #1's own refreshed session.
+- **Terminology correction, same day:** "Boss Dashboard" had been used loosely for two different objects — the collection (folder, ID 6) and the actual dashboard (ID 3) inside it. Documented the distinction explicitly in `docs/metabase-permissions.md`, since the mixup is what caused this bug.
+- Director #1 provisioned this same day: `Director` group only (confirmed via `/api/user`, not the admin UI label); temporary password relayed by Arslan directly (no SMTP on this instance, never recorded in this repo).
+
+### Next steps (superseded — see below)
+
+- Second Director account, `Sales/Purchase` group, and the full collection redesign — done next, 2026-08-13.
+- ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, and `DovizKodu` normalization — all unchanged/open from above.
+
+## 2026-08-13 — collections & permissions redesign: three collections, Sales/Purchase group, root + database lockdown
+
+Full restructure from the single `Boss Dashboard` model to three purpose-built collections, done via Playwright MCP against the live instance. Full detail in `docs/metabase-permissions.md`.
+
+- Renamed `User` → `Other` (group 6, unchanged zero-access config); created `Sales/Purchase` (group 7, no members yet, real people explicitly out of scope for this phase).
+- Created three flat collections under root — `Yöneticiler` (9), `Satış/Satın Alma` (10), `Diğer` (11) — each with `Director`: View, plus the matching department group: View, everyone else: No access. Hit the same `All Users`-defaults-to-Curate gotcha as the Boss Dashboard fix and set it to No access on all three.
+- Moved dashboard 3 (`Cansun Satış Genel Bakış`) into `Yöneticiler` and question 56 (`Müşteri Son Fiyat Sorgusu`) into `Satış/Satın Alma`. Deliberately left the old `Boss Dashboard` collection and its other 13 questions in place — dashboards reference cards by ID regardless of which collection the dashboard lives in, so nothing broke, but flagged it as a slightly orphaned leftover for a future cleanup pass.
+- Locked the root collection (`Our analytics`) to No access for `All Users` — nothing can be saved loose at root going forward.
+- Locked database-level query building to admins only: set `Director`/`Sales/Purchase`/`Other`/`All Users` all to "No" create-queries on `metabase_reporting_db`. This also hides the Databases sidebar entry for everyone non-admin.
+- **Incident:** lost the live admin session mid-verification — logging a throwaway test account into the same browser tab invalidated it server-side. Regained access using Metabase's own reset-password CLI tool on the server; no other accounts or data were affected.
+- Verified live with throwaway test accounts (created, checked, deactivated afterward) rather than trusting the permission graph alone.
+
+### Same day, second pass — sidebar ordering, Boss Dashboard lockdown, first Sales/Purchase accounts
+
+- Renamed the three collections with numeric prefixes (`1. Yöneticiler`, `2. Satış/Satın Alma`, `3. Diğer`) to force sidebar sort order.
+- Revoked `Director`'s access to the old `Boss Dashboard` collection entirely (View → No access) — this **broke 5 of 8 cards** on `Cansun Satış Genel Bakış`, since those cards' questions still physically live there. Fixed same day, see next section.
+- Provisioned the first two real `Sales/Purchase` accounts (user IDs 6, 7) and a second Director account (Director #2, user ID 3) — all group memberships confirmed via `/api/user/<id>`, not the admin UI label.
+
+### Same day, third pass — Boss Dashboard lockdown regression fix
+
+- Restored `Director`'s access on the old collection to **View** (not the broken No access, and not full Curate) — cards render correctly again.
+- Renamed the collection `Boss Dashboard` → `_Hesaplama Kaynağı` ("calculation source" — deliberately generic, non-hierarchical naming) and nested it as a sub-collection under `1. Yöneticiler` instead of a top-level sidebar item.
+- Verified live: all 8 dashboard cards render with zero permission placeholders; edit/move/delete are blocked (Metabase shows an explicit "View-only" badge); `Sales/Purchase`/`Other` confirmed unaffected.
+- Separately redacted account-specific details from the permissions doc afterward, same day — a documentation cleanup, not a permissions change.
+
+### Next steps (superseded — see below)
+
+- `Other`/`Diğer` real-report rollout — still deferred; collection/group scaffolding exists but stays empty.
+- New sync pipeline (`supplier_last_purchase`) — done next, 2026-08-14.
+- ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, and `DovizKodu` normalization — all unchanged/open from above.
+
+## 2026-08-14 — supplier_last_purchase pipeline + new-report playbook
+
+Added a third synced table, `supplier_last_purchase` (each supplier's last purchase per product, across all three companies via `Firma`), following the by-now-established per-table-script pattern.
+
+- Sourced from the pre-built ERP view `aa_supplier_last_purchase` (~29,300 rows). Full replace, but via upsert-then-prune rather than `TRUNCATE` — confirmed live that `reporting_writer` only has `SELECT, INSERT, UPDATE, DELETE` on this table, no `DROP` (which `TRUNCATE` requires in MySQL).
+- Added `refresh_supplier_last_purchase.py` to the monitoring registry, cron'd `0 3 * * *` (15 minutes after `customer_last_price`, confirmed non-overlapping from the earlier jobs' observed run durations).
+- Added the question `Tedarikçi Son Alış Fiyatı` (card 57) to `2. Satış/Satın Alma`, same two-Field-Filter search pattern as `Müşteri Son Fiyat Sorgusu`. No new collection, no permission changes needed — confirmed via the permissions graph first that the existing `Satış/Satın Alma` grants already covered it.
+- Verified `Sales/Purchase`/`Other` group access via the Metabase API directly (session tokens for throwaway test accounts) rather than logging into the shared admin browser session as someone else, to avoid repeating the 2026-08-13 session-invalidation incident.
+- Wrote `docs/adding-a-new-report.md` — a standing playbook for the recurring "new ERP view → synced table → Metabase question" pattern, based on how this and the two prior pipelines were actually built.
+- This script's per-run Telegram notification (sent on both success and failure) was later found to be an inconsistency with every other job and removed on 2026-08-19 — see below.
+
+### Next steps (superseded — see below)
+
+- ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, container timezone fix, and `Other`/`Diğer` rollout — all unchanged/open from above.
+
+## 2026-08-18 — Metabase's own DB account renamed for clarity
+
+Renamed the Metabase-facing MySQL account on `reporting-db` from `metabase_ro` to `metabase_reporting_ro`, to end the confusing shared name with the *ERP's* separate `metabase_ro` account (different host, different purpose, discovered back on 2026-08-10). Documentation-only change on this side — Arslan performed the actual rename directly on athena; updated `docs/credentials.md`/`docs/tables.md` references accordingly. No grants or application behavior changed.
+
+## 2026-08-19 — cheque_bond_maturity pipeline, consolidated Telegram digest, first Takip tab
+
+**New table, `cheque_bond_maturity`** (Cansun + Almer cheque/bond maturity schedule; Karacan intentionally excluded — not present in the source view). Full-replace-by-key via chunked `REPLACE INTO` (same no-`DROP`-grant reason as before). **Composite-key correction found before shipping:** the originally intended key `(Firma, EvrakNo)` turned out not unique — one document can carry several installments, each needing its own row. Verified live first (222 source rows collapsed to only 70 distinct `(Firma, EvrakNo)` pairs) rather than assuming; Arslan changed the primary key to `(Firma, BelgeNo)` directly on `reporting-db` before the sync script was built. Added to the monitoring registry, cron'd `15 3 * * *`.
+
+**Consolidated Telegram digest:** found `refresh_supplier_last_purchase.py` was the only sync job sending its own standalone Telegram message per run — an inconsistency, not a feature (the other jobs' runs were logged the same way but nothing ever surfaced a completion time anywhere). Removed that script's standalone message and instead taught the shared `job_logging.py`/`report_job_status.py` to capture and display a `completed HH:MM:SS` timestamp for every job in the one 07:00 digest. Net effect: one consolidated message now covers all four registry jobs with per-job timestamps, no separate per-job Telegram sends exist anywhere in the codebase.
+
+**First `Takip` tab (superseded 2026-08-20, see below):** split dashboard 4 (`Firmamızın Senet-Çek Durumu`) into `Genel Bakış` (original 2 cards, untouched) and a new `Takip` tab with 12 monthly calendar cards (`Ocak Takip`…`Aralık Takip`), each a date-series LEFT JOIN against `cheque_bond_maturity`. Weekday/holiday flagging verified against a real calendar before building all 12. Hit and documented a real Metabase API gotcha here: `PUT /api/dashboard/:id/cards` deletes any tabs not included in the same request body, so `tabs` must always be sent alongside `cards` on every call, not just the one that creates them.
+
+### Next steps (superseded — see below)
+
+- `Takip`'s fixed 12-month design doesn't handle a year boundary — rebuilt next, 2026-08-20.
+- ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, container timezone fix, and `Other`/`Diğer` rollout — all unchanged/open from above.
+
+## 2026-08-20 — Takip rebuilt with a date-driven range, monthly filter-default bump job, dashboard-component policy
+
+**`Takip` rebuilt and moved:** replaced the fixed Ocak–Aralık design with a data-driven range (`MAX(VadeTarihi)` through the current month — 7 months as of this date, spanning a year boundary cleanly) and moved it from `Firmamızın Senet-Çek Durumu` to `Cansun Satış Genel Bakış` as a new tab, preserving all 13 existing cards' exact positions in the same API call (same "always send all tabs" gotcha as 2026-08-19). Added conditional color-range formatting on totals, confirmed live to exist in this Metabase version before assuming so. Renamed the date column to `Vade Tarihi` and switched its display format to `D/M/YYYY` after confirming live that manual column-width dragging doesn't exist in this version (it reorders columns instead) — the narrower date format, not a width change, is what actually removed the table's need for a horizontal scrollbar. Arslan renamed the tab to `Çek-Senet Takip` shortly after.
+
+**`bump_filter_defaults.py` added** — a monthly (not daily) job that re-points the "Günlük/Haftalık" tab's 9 hardcoded-year/month card defaults plus 2 dashboard filters at the current month via the Metabase API, since those defaults would otherwise silently go stale every month. Discovered this Metabase version (v0.63.2.7) uses a newer MBQL5 "stages" query shape, not the classic dict shape the public API docs describe — found the real template-tag location empirically rather than trusting the docs. Created a scoped `METABASE_API_KEY` for this, since session-token login isn't practical for a once-a-month unattended job. Deliberately excluded from the daily monitoring registry (would falsely cry "DID NOT RUN" on the other ~29 days of the month) — sends its own dedicated Telegram message per run instead. Cron'd `30 3 1 * *`.
+
+**Policy added:** any future dashboard-component question must be created directly inside `_Hesaplama Kaynağı` from the start, not built elsewhere and moved later — avoids repeating the collection-membership confusion hit during earlier permission audits.
+
+### Next steps (superseded — see below)
+
+- Vault balance/movement pipelines — added next, 2026-08-21.
+- ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, container timezone fix, and `Other`/`Diğer` rollout — all unchanged/open from above.
+
+## 2026-08-21 — vault_status and vault_movements pipelines (cash vault reporting)
+
+Two new tables covering Cansun's cash vaults ("kasa"): `vault_status` (live balances, 3 rows, hourly `REPLACE INTO`) and `vault_movements` (full transaction history behind those balances).
+
+- `refresh_vault_status.py`: hourly, 09:00–19:00 (`0 9-19 * * *`). Deliberately excluded from the daily digest registry — its first run of the day (09:00) postdates the 07:00 report, so registering it would falsely cry "DID NOT RUN" every single morning. Uses failure-only Telegram alerting instead — a new pattern alongside the existing daily ok/fail digest, since a success ping every hour would flood the channel.
+- `vault_movements` gets **two** separate sync scripts rather than one, matching two different freshness needs: `refresh_vault_movements_hourly.py` (last 3 days, scoped `DELETE`+re-insert, offset 5 minutes past `vault_status`'s cron so their ERP connections don't fire in the same instant) and `refresh_vault_movements_daily.py` (full nightly replace, `30 3 * * *`). Both failure-only on Telegram, both excluded from the registry for the same "first run postdates the digest" reason.
+- One-time manual backfill of `vault_movements` (1,306 rows) before cron took over.
+- Confirmed live (not assumed) that `reporting_writer` has no `DROP` grant on `vault_movements` either — same `DELETE`-not-`TRUNCATE` pattern as `supplier_last_purchase`/`cheque_bond_maturity`.
+
+### Next steps (superseded — see below)
+
+- New çek/senet portfolio pipeline — added 2026-08-23.
+- ERP/`reporting_writer` password rotation, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, container timezone fix, and `Other`/`Diğer` rollout — all unchanged/open from above.
+
+## 2026-08-23 — cek_senet_portfoy pipeline (outstanding çek/senet portfolio)
+
+Added `refresh_cek_senet_portfoy.py`, syncing `reporting.cek_senet_portfoy` (10 rows) from ERP view `aa_cek_senet_portfoy`, every 2 hours 09:00–19:00 (`0 9-19/2 * * *`) — deliberately not offset from `vault_status`'s hourly slots, since the two hit unrelated source views/destination tables and the overlap is harmless.
+
+- **Mandatory pre-flight duplicate check, unique to this job:** before any write, groups source rows by `(Firma, CekSiraNo)` — the intended primary key — and aborts loudly if any group has more than one row, since a silent `DELETE`+`INSERT` would otherwise quietly collapse real duplicate rows if that key assumption ever turned out wrong. Not yet exercised against real duplicate data (would require writing to the read-only ERP source); verified by code review only so far.
+- Same no-`DROP`-grant discovery as prior tables — switched to `DELETE`+`INSERT`.
+- Per the task spec, this job originally sent a Telegram message on **both** success and failure — a deliberate one-off deviation from the failure-only pattern the other intraday jobs use. Changed the next day (below) once the every-2-hours success pings became noise.
+- Added three Metabase questions to `_Hesaplama Kaynağı`, placed on dashboard 3's "Kasa Durumu" tab between the vault scalar cards and the `vault_movements` tables.
+
+## 2026-08-24 — vault_movements window widened, cek_senet_portfoy alerting quieted, Sales/Purchase batch 2
+
+- **`refresh_vault_movements_hourly.py`:** widened its rolling window from 3 to 4 days per Arslan's request. `refresh_vault_movements_daily.py` needed no change (already a full nightly replace regardless of window). Verified with a manual run (20 rows under the new 4-day cutoff vs. 9 under the old 3-day one on the prior cron run).
+- **`cek_senet_portfoy`:** removed the success-path Telegram message added 2026-08-23 — it now matches the failure-only pattern used by every other intraday job. Re-verified both the now-silent success path and the still-working failure alert.
+- **Sales/Purchase batch 2:** added 7 more real accounts (user IDs 20–26), plus one more (ID 27) once Arslan confirmed shortly after that an initially-ambiguous 8th candidate (originally floated for `Other`) actually belonged in `Sales/Purchase` — brings the group to 10 real members. All confirmed via `/api/user/<id>`, group membership exactly `[All Users, Sales/Purchase]`.
+- **Password-handling preference confirmed for this batch:** Metabase's admin UI has no "type an arbitrary password" flow for an admin — only "Reset password" (admin sees the generated value) or "Get reset link" (only the user ever sees it). Arslan confirmed he's fine with "Reset password" and wants the resulting table relayed directly in chat at the end (not a standalone file, which was the prior batch's method) — noted as a standing preference to check against, not assumed automatically next time.
+- Updated `docs/metabase-permissions.md`, `docs/monitoring.md`, `docs/tables.md` to reflect all of the above; committed and pushed together.
+
+### Next steps
+
+- ERP/`reporting_writer` password rotation — still pending, Arslan's own action item, unchanged since 2026-08-10.
+- Container timezone fix (Metabase/MySQL still on UTC internally) — still pending Arslan's go-ahead and a low-usage window, unchanged since 2026-08-12.
+- `scripts/sync_engine.py` consolidation — still undecided; every pipeline added since has followed the per-table-script pattern instead.
+- `DovizKodu` normalization (EUR/EURO variants) — still open, unscheduled.
+- `Other`/`Diğer` real-report rollout — still deferred; scaffolding exists, no real members or reports yet.
+- No monitoring for `report_job_status.py`, `bump_filter_defaults.py`, or any of the intraday/failure-only jobs' own health (i.e. nothing watches these watchers) — known gap, not requested.
