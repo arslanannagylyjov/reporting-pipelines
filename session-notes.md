@@ -273,8 +273,30 @@ Built `Stok Listesi` (card 103), a deliberate full-detail placeholder — every 
 
 **Documentation:** updated all six files per the (now-expanded) Step 13 checklist in `docs/adding-a-new-report.md` — `docs/tables.md`, `docs/monitoring.md`, `docs/metabase-permissions.md`, `docs/server-architecture.md`, `README.md`, and this entry.
 
-### Next steps
+### Next steps (superseded — see below)
 
 - Old throwaway test accounts (`Test ChequeVerify*`/`TabsVerify*`/`TakipMoveVerify*`) — still active, flagged but not deactivated; Arslan's call on whether/when to clean up.
 - `stock_details` column exposure (which columns `Stok Listesi` should actually show, given `FabrikaFiyatiUsd`) — explicit future decision, not made here.
 - ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
+
+## 2026-08-25 (continued) — sales_snapshot stale-row bug: root cause, one-time cleanup, permanent fix
+
+Arslan reported a manually-confirmed total (1,227,259.37 TL, Almer+Cansun, HesapKodu `S 35831`, August 2026) not matching the dashboard. Investigated as diagnosis-only first, per explicit instruction — no fix until the cause was understood.
+
+**Diagnosis:** ERP source view (`aa_rapor_engin_karacan_satis`) itself totaled 1,224,959.26 for this customer/month (Karacan confirmed genuinely absent, not excluded) — already 2,300.11 TL short of Arslan's figure, a separate and still-unexplained gap unrelated to the sync pipeline. Comparing `sales_snapshot` against that same ERP total surfaced the real bug: 36 Almer rows in `sales_snapshot` where the ERP view has only 12. No `(Firma, ID)` duplicates existed (composite PK intact) — instead, three distinct ID ranges (152446–152457, 152674–152685, 152769–152780) all represented the *same* line items, apparently reissued twice in the ERP under new IDs; only the last range still exists in the live ERP view. Root cause: `refresh_sales_snapshot.py`'s stage-then-`REPLACE INTO` merge has always had no mechanism to remove a row once its key stops appearing in the ERP fetch — every such correction anywhere in the table leaves a permanent stale duplicate behind, forever.
+
+**Table-wide scope, not just S 35831:** a dry-run `SELECT` (fresh ERP pull staged into `sales_staging`, diffed against `sales_snapshot` for the same 4-month window, then `sales_staging` truncated back to empty — no side effects) found **90 stale rows across 3 distinct HesapKodu**, not one: `S 35831` (Almer, 24 rows, 1,881,466.15 TL), `Y 01823` (Cansun, 65 rows, 606,154.56 TL — the largest single contributor), and `34-947` (Cansun, 1 row, 2,759.42 TL). Total: **2,490,380.13 TL** of phantom revenue sitting in the table before cleanup. Shown to Arslan for explicit confirmation before any deletion, per instruction.
+
+**One-time cleanup:** re-fetched a fresh ERP pull (re-confirmed 90/2,490,380.13 matched the earlier dry run before deleting, guarding against drift between the two runs), then ran the equivalent `DELETE` with the identical `WHERE` clause. **Exactly 90 rows deleted.** Re-verified `S 35831`/August immediately after: 12 Almer rows / 1,161,510.03 TL, 4 Cansun rows / 63,449.23 TL — matches the live ERP view exactly.
+
+**Permanent fix:** added a prune step to `refresh_sales_snapshot.py` — `DELETE FROM sales_snapshot WHERE Tarih >= <cutoff> AND NOT EXISTS (matching key in sales_staging)`, run immediately after the merge and before staging is cleared. The window cutoff is now computed **once** (`SELECT DATE_SUB(CURDATE(), INTERVAL 4 MONTH)` against the ERP connection) and passed as a bound parameter to both the fetch and the prune, rather than two independently-evaluated `CURDATE()` calls against two different MySQL servers that could in principle drift apart.
+
+**Logging decision, not a silent deviation:** kept `job_runs.csv`'s `rows` field meaning unchanged (merged-row count only) rather than extending the shared CSV schema `job_logging.py` writes for all eleven jobs to carry a second number — judged that redesigning a schema used by ten other jobs' log history was out of proportion to logging one job's prune count. The prune count is printed to stdout (`refresh.log`) on every run instead, same as every other diagnostic line this script already prints. Documented in `docs/monitoring.md` in case this tradeoff should be revisited.
+
+**Verified (2026-08-25):** manual run after the fix merged 68,007 rows and pruned 0 (correct — the one-time cleanup had already removed everything stale), zero errors, logged `ok`. Table-wide re-check: in-window row count (68,007) exactly equals the fresh ERP fetch's row count — zero orphans anywhere in the table. Rows older than the window are structurally unreachable by either the merge or the prune (both scoped to `Tarih >= cutoff`) — confirmed 618,498 pre-window rows present and spot-checked unchanged. Known-good current IDs (152769/152775/152780, the real still-current `S 35831` Almer invoices) confirmed to survive the prune untouched.
+
+### Next steps
+
+- **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug (the sync is now provably faithful to the ERP view), needs reconciling against whatever source produced the manual figure.
+- Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
+- Whether the `job_runs.csv` schema should eventually carry a prune count (or similar per-job secondary metrics) as a deliberate, first-class field rather than leaving it to each script's own stdout — flagged, not decided.

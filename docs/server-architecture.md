@@ -61,11 +61,12 @@ Local time now tracks real Istanbul time (Turkey has used a fixed +03 offset wit
 
 ## Data flow
 
-**sales_snapshot** (incremental, stage-then-merge):
+**sales_snapshot** (incremental, stage-then-merge-then-prune):
 1. **ERP MySQL** (`10.20.52.11:13989`, database `cansun`, read-only user `metabase_ro`) — source of truth for sales data.
-2. `refresh_sales_snapshot.py` reads from ERP in batches, stages rows into `reporting.sales_staging` on `reporting-db` (via `reporting_writer`).
-3. Staged rows are merged into `reporting.sales_snapshot`.
-4. `sales_staging` is cleared after each run (it's a transient landing table — 0 rows at rest is expected).
+2. `refresh_sales_snapshot.py` reads from ERP in batches (last 4 months, cutoff computed once and reused below), stages rows into `reporting.sales_staging` on `reporting-db` (via `reporting_writer`).
+3. Staged rows are merged into `reporting.sales_snapshot` via `REPLACE INTO`.
+4. **Prune step (added 2026-08-25):** `DELETE FROM sales_snapshot WHERE Tarih >= <same cutoff> AND NOT EXISTS (matching key in sales_staging)` — removes rows whose ERP document was corrected/reissued under a new ID (or genuinely removed) since the last run, which the `REPLACE INTO` alone never does. See `docs/tables.md`/`docs/monitoring.md` for the root cause and the one-time cleanup this followed.
+5. `sales_staging` is cleared after each run (it's a transient landing table — 0 rows at rest is expected).
 
 **customer_last_price** (full replace, no staging):
 1. **ERP MySQL**, view `aa_customer_last_price` — pre-built, pre-deduplicated (one row per `Firma`/`HesapKodu`/`StokKodu`), granted to `metabase_ro`.

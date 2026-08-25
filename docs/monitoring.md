@@ -523,3 +523,17 @@ run.
   Current month was unchanged at the time of this test (still 2026-08), so
   this run was a no-op on the actual default values — see the script's own
   log for the exact before/after on its first real 1st-of-month run.
+
+## `refresh_sales_snapshot.py` — prune-on-sync added (2026-08-25)
+
+**Root cause found:** the stage-then-`REPLACE INTO` merge this script has always used only ever adds/updates rows whose `(Firma, ID)` key appears in the current 4-month ERP fetch — it has no mechanism to remove a row that simply stops appearing (e.g. an invoice corrected/reissued under a new ID in the ERP). Every such correction left a permanent stale duplicate in `sales_snapshot`, invisibly inflating revenue totals. Found via a customer-reported total mismatch (HesapKodu `S 35831`, August 2026), then confirmed table-wide: see `docs/tables.md` for the full one-time cleanup numbers (90 stale rows, 2,490,380.13 TL, across 3 HesapKodu, deleted only after a dry-run `SELECT` was shown to and confirmed by Arslan).
+
+**Fix:** added a `DELETE ... WHERE Tarih >= <cutoff> AND NOT EXISTS (matching key in sales_staging)` step immediately after the merge, using a cutoff computed **once** (`SELECT DATE_SUB(CURDATE(), INTERVAL 4 MONTH)` against the ERP connection) and passed as a bound parameter to both the fetch and the prune — deliberately not two independently-evaluated `CURDATE()` calls against two different MySQL servers (ERP vs. `reporting-db`), which could in principle drift apart.
+
+**Logging decision, documented rather than silently made:** `main()` still returns only `total_inserted` (merged-row count), so `job_runs.csv`'s `rows` field keeps its existing meaning — comparable across this job's entire history, and unchanged for every other job that reads/writes that same shared CSV via `job_logging.py`. The prune count is printed to stdout (`Pruned N stale rows...`, captured in `refresh.log` exactly like every other diagnostic line this script already prints) rather than added as a new column to `job_runs.csv`'s schema. Extending that schema would touch all eleven jobs' log format and `report_job_status.py`'s parsing for the sake of one job's second number — judged out of proportion to what was asked, so this is a deliberate deviation from a literal "prune count shows up in job_runs.csv" reading of the request. Flagging it here in case that tradeoff should be revisited (e.g. if prune-count anomalies need to be visible without reading `refresh.log`).
+
+**Verified (2026-08-25):**
+- Manual run after the fix: `68,007 rows merged, 0 stale rows pruned` (correctly zero — the one-time cleanup had already removed the only stale rows that existed at the time), zero errors, logged `status=ok` in `job_runs.csv`.
+- Table-wide re-check: rows with `Tarih >= cutoff` in `sales_snapshot` (68,007) exactly equals the fresh ERP fetch's row count — zero orphans anywhere in the table, not just for `S 35831`.
+- Rows older than the rolling window structurally cannot be touched (both the merge and the prune are scoped to `Tarih >= cutoff`) — confirmed live: 618,498 pre-window rows, spot-checked a few directly (e.g. ID 495, 2023-09-06, unchanged).
+- Spot-checked known-good current IDs (152769, 152775, 152780 — the real, still-current `S 35831` Almer invoices) survived the prune untouched.

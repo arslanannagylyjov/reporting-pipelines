@@ -40,6 +40,18 @@ Durable table Metabase dashboards read from. 675,810 rows as of 2026-08-10.
 
 Indexes beyond the primary key: `StokKodu`, `Tarih` (both `MUL` — non-unique, used for lookups/filtering).
 
+**Prune-on-sync added (2026-08-25):** `refresh_sales_snapshot.py`'s stage-then-`REPLACE INTO` merge only ever adds/updates rows whose `(Firma, ID)` key is present in the current 4-month ERP fetch — it never removes a row on its own. When an ERP invoice is corrected or reissued under a new `ID` (the old one dropping out of the source view entirely), the old row used to linger in `sales_snapshot` forever, silently double- (or triple-) counting revenue for that document. The script now adds an explicit `DELETE FROM sales_snapshot WHERE Tarih >= <cutoff> AND NOT EXISTS (... matching key in sales_staging ...)` step immediately after the merge, using the exact same cutoff value computed once for the fetch — not a second, independently-evaluated `CURDATE()` call that could drift between the ERP server and `reporting-db`. Rows older than the rolling window are structurally untouched by this (both the merge and the prune are scoped to `Tarih >= cutoff`), confirmed live: 618,498 pre-window rows unchanged, 68,007 in-window rows after a clean run with zero orphans. See `docs/monitoring.md` for the logging behavior and `session-notes.md` for the full incident writeup.
+
+**One-time cleanup (2026-08-25), before the fix was deployed:** a live audit (triggered by a reported total mismatch for HesapKodu `S 35831`, August 2026) found **90 stale rows** across **3 distinct HesapKodu** that had accumulated this way, totaling **2,490,380.13 TL** of phantom revenue:
+
+| Firma | HesapKodu | CariAdi | stale rows | sum TutarTL |
+|---|---|---|---|---|
+| Cansun | 34-947 | MEHMET ERDEM | 1 | 2,759.42 |
+| Almer | S 35831 | MK KAMMAZ OTO YEDEK PARCA MAKINA SAN. VE TIC.LTD.STI. | 24 | 1,881,466.15 |
+| Cansun | Y 01823 | MIKAIL MOLDOVA | 65 | 606,154.56 |
+
+Confirmed via a dry-run `SELECT` first (shown to and approved by Arslan before any deletion), then deleted with the identical `WHERE` clause — exactly 90 rows removed, matching the dry run precisely. Post-cleanup, `S 35831`/August matched the live ERP view exactly (12 Almer rows / 1,161,510.03 TL, 4 Cansun rows / 63,449.23 TL) before the permanent fix was even deployed.
+
 ## `sales_staging`
 
 Identical schema to `sales_snapshot`. Transient landing table — each cron run stages a batch of ERP rows here, merges them into `sales_snapshot`, then clears the table. 0 rows is the expected resting state; non-zero rows outside a run window would indicate a failed/interrupted sync.
