@@ -25,16 +25,16 @@ Two stopped `hello-world` containers also exist (`optimistic_moser`, `gracious_b
 30 3 1 * *      /usr/bin/python3 /home/arslan/reporting-scripts/bump_filter_defaults.py >> /home/arslan/reporting-scripts/bump_filter_defaults.log 2>&1
 45 3 * * *      /usr/bin/python3 /home/arslan/reporting-scripts/refresh_stock_details.py >> /home/arslan/reporting-scripts/refresh_stock_details.log 2>&1
 0 7 * * *       /usr/bin/python3 /home/arslan/reporting-scripts/report_job_status.py >> /home/arslan/reporting-scripts/report_job_status.log 2>&1
-0 9-19 * * *    /usr/bin/python3 /home/arslan/reporting-scripts/refresh_vault_status.py >> /home/arslan/reporting-scripts/refresh_vault_status.log 2>&1
+0,30 9-19 * * * /usr/bin/python3 /home/arslan/reporting-scripts/refresh_vault_status.py >> /home/arslan/reporting-scripts/refresh_vault_status.log 2>&1
 5 9-19 * * *    /usr/bin/python3 /home/arslan/reporting-scripts/refresh_vault_movements_hourly.py >> /home/arslan/reporting-scripts/refresh_vault_movements_hourly.log 2>&1
 0 9-19/2 * * *  /usr/bin/python3 /home/arslan/reporting-scripts/refresh_cek_senet_portfoy.py >> /home/arslan/reporting-scripts/refresh_cek_senet_portfoy.log 2>&1
 ```
 
-Eleven scheduled jobs on athena as of 2026-08-25, grown from the original two — each was added incrementally alongside a new synced table; see `docs/monitoring.md` and `session-notes.md` for the history and reasoning behind each addition's cron time. Grouped by cadence:
+Eleven scheduled jobs on athena as of 2026-08-26, grown from the original two — each was added incrementally alongside a new synced table; see `docs/monitoring.md` and `session-notes.md` for the history and reasoning behind each addition's cron time. Grouped by cadence:
 
 - **Nightly batch (02:30–03:45):** `sales_snapshot` → `customer_last_price` → `supplier_last_purchase` → `cheque_bond_maturity` → `vault_movements_daily` → `stock_details`, each offset ~15 minutes past the previous based on that job's own observed run duration (all finish in well under a minute, `stock_details` itself in ~7s for 40k rows). `bump_filter_defaults.py` shares the 03:30 slot but only actually fires on the 1st of the month.
 - **07:00 daily digest:** `report_job_status.py` sends one Telegram summary covering only the five jobs registered in `monitored_jobs.yml` (`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`, `cheque_bond_maturity`, `stock_details`) — see `docs/monitoring.md` for why every other job below is deliberately excluded from that registry (their schedules don't fit a "ran once overnight" daily-freshness check) and instead use failure-only or per-run Telegram alerting of their own.
-- **Intraday, 09:00–19:00:** `vault_status` (hourly), `vault_movements_hourly` (hourly, offset 5 minutes past `vault_status` so their ERP connections don't fire in the same instant), `cek_senet_portfoy` (every 2 hours, same top-of-hour slots as `vault_status` — confirmed harmless, since the two hit entirely different source views/destination tables).
+- **Intraday, 09:00–19:00:** `vault_status` (every 30 minutes, widened from hourly on 2026-08-26 — runtime is a consistent ~0.10s, so the halved interval leaves a wide margin, and the full crontab was checked for any other `:30` job in this window before making the change: none), `vault_movements_hourly` (hourly, offset 5 minutes past `vault_status`'s top-of-hour slot so their ERP connections don't fire in the same instant), `cek_senet_portfoy` (every 2 hours, same top-of-hour slots as `vault_status` — confirmed harmless, since the two hit entirely different source views/destination tables).
 
 ## System timezone fix (2026-08-12)
 
@@ -89,7 +89,7 @@ See `docs/tables.md` for full schema and current row counts (each table's own "a
 | `customer_last_price` | 65,143 (2026-08-10) | Durable synced last-price-per-customer data, read by Metabase (full replace each run) |
 | `supplier_last_purchase` | 29,351 (2026-08-14) | Each supplier's last purchase per product, all three companies (upsert-then-prune) |
 | `cheque_bond_maturity` | 222 (2026-08-19) | Cheque/bond maturity schedule, Cansun + Almer (full-replace-by-key) |
-| `vault_status` | 3 (2026-08-21) | Live snapshot of the three cash vault balances, hourly `REPLACE INTO` |
+| `vault_status` | 3 (2026-08-21) | Live snapshot of the three cash vault balances, `REPLACE INTO` every 30 minutes (widened from hourly 2026-08-26) |
 | `vault_movements` | 1,306+ (2026-08-21 backfill, grows daily) | Vault transaction history behind `vault_status`, two sync jobs (hourly window + nightly full replace) |
 | `cek_senet_portfoy` | 10 (2026-08-23) | Outstanding çek/senet portfolio (full-replace-by-key with a pre-flight duplicate check) |
 | `stock_details` | 40,104 (2026-08-25) | Full stock/product catalog, pricing/supplier/dimensions, `TRUNCATE`-based nightly replace |

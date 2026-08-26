@@ -295,8 +295,18 @@ Arslan reported a manually-confirmed total (1,227,259.37 TL, Almer+Cansun, Hesap
 
 **Verified (2026-08-25):** manual run after the fix merged 68,007 rows and pruned 0 (correct — the one-time cleanup had already removed everything stale), zero errors, logged `ok`. Table-wide re-check: in-window row count (68,007) exactly equals the fresh ERP fetch's row count — zero orphans anywhere in the table. Rows older than the window are structurally unreachable by either the merge or the prune (both scoped to `Tarih >= cutoff`) — confirmed 618,498 pre-window rows present and spot-checked unchanged. Known-good current IDs (152769/152775/152780, the real still-current `S 35831` Almer invoices) confirmed to survive the prune untouched.
 
-### Next steps
+### Next steps (superseded — see below)
 
 - **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug (the sync is now provably faithful to the ERP view), needs reconciling against whatever source produced the manual figure.
 - Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
 - Whether the `job_runs.csv` schema should eventually carry a prune count (or similar per-job secondary metrics) as a deliberate, first-class field rather than leaving it to each script's own stdout — flagged, not decided.
+
+## 2026-08-26 — vault_status widened from hourly to every 30 minutes
+
+Per Arslan's request. Manual run first: `status=ok`, 3 rows, fresh values confirmed directly against `reporting-db` (TL/EUR/USD balances all current) — same verification standard as any other manual run, not just "no error." Checked the script's actual runtime history before touching cron, rather than assuming the old cadence being safe meant the new one would be too: a consistent ~0.10s across its entire hourly run history, so halving the interval to 30 minutes leaves an enormous margin. Checked the *full* crontab, not just the neighboring `vault_movements_hourly` job, for anything else scheduled at `:30` inside 09:00–19:00 — found none (`vault_movements_daily`/`bump_filter_defaults.py` both use `:30` but at 03:30, outside this window). Cron changed from `0 9-19 * * *` to `0,30 9-19 * * *`.
+
+### Next steps
+
+- **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug, needs reconciling against whatever source produced the manual figure.
+- Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
+- Whether the `job_runs.csv` schema should eventually carry a prune count as a first-class field — flagged, not decided.

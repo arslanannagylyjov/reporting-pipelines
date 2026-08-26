@@ -268,9 +268,16 @@ repo), same convention as the other sync scripts. Syncs `reporting.vault_status`
 (3 rows — see `docs/tables.md`) from the ERP view `aa_vault_status` via a single
 unchunked `REPLACE INTO`, no staging table.
 
-Cron: `0 9-19 * * *` — hourly on the hour, 09:00 through 19:00 daily. Confirmed
-no overlap with the 02:30/02:45/03:00/03:15/03:30 jobs — entirely different
-time window.
+Cron: `0,30 9-19 * * *` — every 30 minutes, 09:00 through 19:00 daily (widened
+from hourly on 2026-08-26, per Arslan's request). Confirmed no overlap with
+the 02:30/02:45/03:00/03:15/03:30 jobs — entirely different time window.
+Checked the script's actual runtime before widening — a consistent ~0.10s
+per run across its entire hourly history — so halving the interval to 30
+minutes leaves an enormous margin, nowhere close to risking overlap.
+Checked the full crontab (not just `vault_movements_hourly`) for any other
+job at `:30` inside 09:00–19:00: none — `vault_movements_daily` and
+`bump_filter_defaults.py` both run at `:30` but outside this window
+(03:30), so no new collision was introduced.
 
 **Deliberately not in `monitored_jobs.yml`:** the registry + 07:00 digest
 (above) check for *today's* log entry at 07:00 — three hours before this job's
@@ -302,6 +309,12 @@ call did not raise — confirming the `[vault_status]` alert reached the bot
 (same verification method as `bump_filter_defaults.py`'s Telegram check above).
 `vault_status` table contents were unaffected by the forced failure (crashed
 before any write).
+
+**Re-verified (2026-08-26, cadence widened to every 30 minutes):** manual
+run loaded 3 rows matching the ERP view exactly, logged `status=ok` in
+`job_runs.csv` (`0.10s`, consistent with its entire prior history), fresh
+values confirmed directly against `reporting-db` afterward. Cron changed
+from `0 9-19 * * *` to `0,30 9-19 * * *`.
 
 ## `refresh_vault_movements_hourly.py` / `refresh_vault_movements_daily.py` — vault movement detail sync (2026-08-21)
 

@@ -132,7 +132,7 @@ Cheque/bond maturity schedule for Cansun and Almer (`Firma` column), sourced fro
 
 ## `vault_status`
 
-Live snapshot of Cansun's three cash vaults ("kasa"), sourced from the pre-built ERP view `aa_vault_status` on Natra. Full-replace via a single unchunked `REPLACE INTO` — no staging table (that pattern is exclusive to `sales_snapshot`) and no chunking (only 3 rows). Refreshed hourly, 09:00–19:00 daily, by `refresh_vault_status.py`. 3 rows as of the 2026-08-21 verification run, matching the ERP view's row count exactly.
+Live snapshot of Cansun's three cash vaults ("kasa"), sourced from the pre-built ERP view `aa_vault_status` on Natra. Full-replace via a single unchunked `REPLACE INTO` — no staging table (that pattern is exclusive to `sales_snapshot`) and no chunking (only 3 rows). Refreshed every 30 minutes, 09:00–19:00 daily (widened from hourly on 2026-08-26), by `refresh_vault_status.py`. 3 rows as of the 2026-08-21 verification run, matching the ERP view's row count exactly.
 
 | Column | Type | Null | Key |
 |---|---|---|---|
