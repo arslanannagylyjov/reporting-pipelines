@@ -305,8 +305,38 @@ Arslan reported a manually-confirmed total (1,227,259.37 TL, Almer+Cansun, Hesap
 
 Per Arslan's request. Manual run first: `status=ok`, 3 rows, fresh values confirmed directly against `reporting-db` (TL/EUR/USD balances all current) — same verification standard as any other manual run, not just "no error." Checked the script's actual runtime history before touching cron, rather than assuming the old cadence being safe meant the new one would be too: a consistent ~0.10s across its entire hourly run history, so halving the interval to 30 minutes leaves an enormous margin. Checked the *full* crontab, not just the neighboring `vault_movements_hourly` job, for anything else scheduled at `:30` inside 09:00–19:00 — found none (`vault_movements_daily`/`bump_filter_defaults.py` both use `:30` but at 03:30, outside this window). Cron changed from `0 9-19 * * *` to `0,30 9-19 * * *`.
 
+### Next steps (superseded — see below)
+
+- **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug, needs reconciling against whatever source produced the manual figure.
+- Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
+- Whether the `job_runs.csv` schema should eventually carry a prune count as a first-class field — flagged, not decided.
+
+## 2026-08-27 — "Genel Bakış" tab: Tarih filter inconsistency diagnosed and fixed
+
+A Director-flagged symptom on dashboard 3's default landing tab: "Bu Ay Ciro" read 71.7M while "İhracat/Yurtiçi Dağılımı" and "Firma Karşılaştırması" implied ~83.7M for the same "Previous 30 days" filter selection. Diagnosed first (no changes), reported, then fixed per Arslan's explicit decisions on each card.
+
+**Root cause — two date models on one tab.** Of the 8 cards on the "Genel Bakış" tab (tab id 4), 4 are driven by the dashboard's `Tarih` field-filter (`WHERE {{tarih}}`: cards 45/46 Toplam Satış Adedi / Ortalama Fatura Değeri, 48/49 Firma Karşılaştırması / İhracat-Yurtiçi) and 4 ignore the filter entirely, hardcoding `CURDATE()`-based logic (43 Bu Ay Ciro = `YEAR(Tarih)=YEAR(CURDATE()) AND MONTH(Tarih)=MONTH(CURDATE())`, 44 Bu Yıl Ciro = `YEAR(Tarih)=YEAR(CURDATE())`, 47 Yıllık Karşılaştırma = `YEAR(Tarih) IN (YEAR(CURDATE()), YEAR(CURDATE())-1)`, 55 2026 Satis Ay Bazinda = MBQL builder filter `Tarih > 2026-01-01`). Proof the two cards use identical math and differ only in date window: setting `Tarih` to the current month made "Firma Karşılaştırması" total exactly equal "Bu Ay Ciro" to the kuruş (71,658,715.25). The 83.7M figure is the rolling-30-day window (drops Aug 27, adds Jul 28–31, four higher-volume days).
+
+**Decision (Arslan, explicit — asked before touching anything):**
+- **Cards 43 / 44 left as fixed KPIs.** No SQL change, no rename. Treated as intentional "where we stand this month / this year" header tiles, independent of the filter by design. (Had they both been switched to `WHERE {{tarih}}` they would have become byte-identical queries — flagged this, which drove the decision.)
+- **Cards 47 / 55 left untouched.** Card 47 is a deliberate this-year-vs-last-year comparison; card 55 a deliberate current-year monthly breakdown by Firma — neither expressible as a single `{{tarih}}` range. Noted but not fixed: card 55's literal `2026-01-01` will silently go stale on 2027-01-01 (card 47 self-updates via `CURDATE()`).
+
+**Part B — widget-type mismatch fixed (cards 45, 46, 48, 49).** Each declared its `{{tarih}}` template tag *and* its card-level `parameters[]` entry as `date/month-year`, while the dashboard `Tarih` param is `date/all-options`. Through the dashboard the mismatch was masked (dashboard value wins), but opening any of the 4 as a standalone question rejected relative ranges: `Invalid parameter value type :date/all-options for parameter "tarih" with widget type :date/month-year`. Changed both the template-tag `widget-type` and the card-level `parameters[].type` to `date/all-options` via `PUT /api/card/:id` with `{dataset_query, parameters}` only. SQL text round-trip-diffed clean (unchanged) on all 4. Verified: a standalone `past30days` query on each now returns data instead of erroring.
+
+**Part C — Tarih filter default set.** Dashboard 3's `Tarih` param (`d147204a`) had no default and no `required` flag, so a fresh load left the filter-aware cards at all-time totals while the hardcoded cards showed current month/year — the tab's own worst inconsistency, visible before any interaction. Set `default: "thisyear"` and `required: true` via `PUT /api/dashboard/3` with `{parameters}` only, matching the `Yıl`/`Ay` convention on the Günlük/Haftalık tab. `thisyear` resolves to `2026-01-01~<today>`. Other params (`firma`, `yıl`, `ay`) confirmed untouched.
+
+**No clobbering.** All edits were card-level `PUT`s and one `parameters`-only dashboard `PUT` — no `/api/dashboard/3/cards` call. Before/after `GET /api/dashboard/3` diff: 39 dashcards, 6 tabs, every per-tab card-id set identical, zero card-name changes. (Dashboard edits log as user `metabase-filter-defaults-cron` — the API key's identity.)
+
+**Verified live (Playwright MCP, `http://10.20.52.43:3000`, admin session):**
+- Fresh load (default "This year"): "Bu Yıl Ciro" (fixed) 541.9M = "İhracat/Yurtiçi Dağılımı" 541.9M = "Firma Karşılaştırması" 541.9M — the same-window cards now agree on landing. "Bu Ay Ciro" 71.7M is the current-month subset, clearly labelled.
+- `Tarih = Previous 30 days`: filter-aware cards move together to the 83.7M window ("İhracat/Yurtiçi" Total 83.7M, "Toplam Satış Adedi" 76,639, "Ortalama Fatura Değeri" 14,578.45 — all matching direct-API cross-checks); the fixed KPIs stay pinned at 71.7M / 541.9M by design.
+- Cards 47 and 55 render unchanged.
+
+**Documentation:** only this file. No table/script/cron added; Part B/C changed filter internals only — no card names or collection placement changed — so `docs/tables.md`, `docs/monitoring.md`, `docs/server-architecture.md`, `docs/metabase-permissions.md`, and `README.md` need no change.
+
 ### Next steps
 
+- **Card 55's hardcoded `2026-01-01`** (and the dashboard `Yıl`/`Ay` filter defaults `2026`/`8`) — same class of silent-staleness issue, all roll over wrong on 2027-01-01. Left as-is here per the "leave untouched" decision; worth a deliberate pass to switch to `CURDATE()`-derived boundaries like card 47 uses.
 - **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug, needs reconciling against whatever source produced the manual figure.
 - Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
 - Whether the `job_runs.csv` schema should eventually carry a prune count as a first-class field — flagged, not decided.
