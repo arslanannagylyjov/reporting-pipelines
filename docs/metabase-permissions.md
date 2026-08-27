@@ -4,19 +4,23 @@ Added 2026-08-11 on the Metabase instance at `10.20.52.43:3000` (internal
 hostname `rapor.wenderparts.int:3000` — does not resolve from outside the
 office network; use the IP directly when working remotely). Started as two
 groups beyond Metabase's built-in `Administrators` and `All Users`; on
-2026-08-13 this was redesigned into a proper collection structure — see
-"Collections & permissions redesign (2026-08-13)" below for the current
-model. `User` was renamed to `Other`, and a new `Sales/Purchase` group was
-added.
+2026-08-13 this was redesigned into a proper collection structure, and on
+2026-08-27 into the 5-folder cascade described in the **Groups** table
+below (the dated sections further down are a chronological log — the table
+is the current authority). `User` was renamed to `Other`, and a new
+`Sales/Purchase` group was added.
 
 ## Groups
 
+**Current model as of 2026-08-27: a 5-folder cascade** — each group reads its assigned folder *and every folder below it*, never above. See "Collection reorg: 5-folder cascade" (2026-08-27) below for the switch from the prior "one folder each" model.
+
 | Group | Metabase group ID | Intended scope |
 |---|---|---|
-| **Director** | 5 | Full read access to `1. Yöneticiler`, `2. Manager`, `3. Satış/Satın Alma`, and `4. Diğer` (renumbered 2026-08-25 to make room for `2. Manager` — see "Manager group and collection" below; originally numbered 1/2/3 as of 2026-08-13), plus View-only access to `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13 — see "Boss Dashboard lockdown regression fix" below). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; has zero implicit access to anything not explicitly granted. |
-| **Manager** | 8 | Added 2026-08-25. Read access to `2. Manager` only. One real member as of 2026-08-25 — Nursiman (also a `Sales/Purchase` member; see "Manager group and collection" below). |
-| **Sales/Purchase** | 7 | Added 2026-08-13. Read access to `3. Satış/Satın Alma` only (renumbered from `2.` on 2026-08-25). Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10 (see "Sales/Purchase provisioning" below). |
-| **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `4. Diğer` only (renumbered from `3.` on 2026-08-25), which is currently empty. No real members yet. |
+| **Director** | 5 | Read access to all five numbered folders — `1. Yöneticiler`, `2. Manager`, `3. İthalat/İhracat`, `4. Satış`, `5. Envanter Yönetimi` — plus View-only on `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; zero implicit access to anything not explicitly granted. |
+| **Manager** | 8 | Added 2026-08-25. Cascade read: `2. Manager` + `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`2. Manager` only" on 2026-08-27). One real member — Nursiman (also a `Sales/Purchase` member). `2. Manager` is currently empty (its only content, `Stok Listesi`, moved to `3. İthalat/İhracat` on 2026-08-27). |
+| **Sales/Purchase** | 7 | Added 2026-08-13. Cascade read: `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`3.` only" on 2026-08-27). Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10. As of 2026-08-27 this group can see `Stok Listesi` (card 103) and its `FabrikaFiyatiUsd`/`Cns_Usd`/`Trk_Usd` cost columns — a deliberate reversal of the prior Director+Manager-only scoping, confirmed by Arslan. |
+| **Satış** | 9 | Added 2026-08-27. Cascade read: `4. Satış` + `5. Envanter Yönetimi`. Zero members — provisioning pending. |
+| **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `5. Envanter Yönetimi` only (bottom of the cascade; was `4. Diğer`, renamed+renumbered 2026-08-27), which is currently empty. No real members yet. |
 
 ## Why this exists
 
@@ -687,3 +691,52 @@ Admin session (API-key-based, superuser) confirmed unaffected throughout via `/a
 ### Unrelated finding during this pass, not acted on
 
 Several throwaway test accounts from earlier sessions (`Test ChequeVerifyDirector`/`Other`/`SalesPurchase`, `Test TabsVerifyDirector`/`SalesPurchase`, `Test TakipMoveVerifyDirector`/`SalesPurchase`) are still active with real recent login timestamps, despite this doc's own stated convention of deactivating throwaway accounts immediately after use. Not deactivated as part of this task — out of scope, flagged for Arslan to decide whether to clean up separately.
+
+## Collection reorg: 5-folder cascade, `Satış` group, `Stok Listesi` moved (2026-08-27)
+
+Restructured the numbered collections from four to five and switched the permission model from **"one folder each"** to a **cascade** ("a group sees its folder and every folder below it, never above"). Done via direct Metabase API (`METABASE_API_KEY`), verified with `/api/collection/graph` and a live Playwright check of the root listing.
+
+### Assumption caught and confirmed before running
+
+The task spec assumed the instance already ran a cascade model. It did not — the live graph (revision 14) and this doc both showed each non-Director group reading exactly one folder (`Manager`→`2` only, `Sales/Purchase`→`3` only, `Other`→`4` only). Flagged this contradiction and stopped for direction. Arslan confirmed: **switch to the cascade**, and **accept** that moving `Stok Listesi` into folder 3 exposes its cost columns to `Sales/Purchase` (a deliberate reversal of the 2026-08-25 Director+Manager-only scoping).
+
+### Structure changes
+
+| # | Collection ID | Before | After |
+|---|---|---|---|
+| 1 | 9 | `1. Yöneticiler` | `1. Yöneticiler` (unchanged) |
+| 2 | 35 | `2. Manager` | `2. Manager` (unchanged name; now empty — `Stok Listesi` moved out) |
+| 3 | 10 | `3. Satış/Satın Alma` | **`3. İthalat/İhracat`** (rename only, same ID/number/contents) |
+| 4 | 39 | — | **`4. Satış`** (new, created flat under root, empty) |
+| 5 | 11 | `4. Diğer` | **`5. Envanter Yönetimi`** (rename + renumber in one PUT — no intermediate double-`4` state) |
+
+`_Hesaplama Kaynağı` (collection 6) stays nested under `1. Yöneticiler`, Director+Admin only — untouched.
+
+`Stok Listesi` (card 103) moved from collection 35 → 10 via `PUT /api/card/103 {"collection_id": 10}`. Turkish spelling normalized to match the existing folders' diacritics (`İthalat/İhracat`, not the spec's ASCII `Ithalat/Ihracat`).
+
+### New group
+
+`Satış` (group ID 9), created empty via `POST /api/permissions/group`. Zero members — provisioning is a later task.
+
+### Permission graph applied (cascade)
+
+`PUT /api/collection/graph` at revision 15 → 16. Full resulting graph, verified by re-`GET` (matches target exactly; `All Users` / group 1 absent throughout):
+
+| Group | 9 (f1) | 35 (f2) | 10 (f3) | 39 (f4) | 11 (f5) | 6 (_Hesaplama) |
+|---|---|---|---|---|---|---|
+| Administrators (2) | write | write | write | write | write | write |
+| Director (5) | read | read | read | read | read | read |
+| Manager (8) | — | read | read | read | read | — |
+| Sales/Purchase (7) | — | — | read | read | read | — |
+| Satış (9) | — | — | — | read | read | — |
+| Other (6) | — | — | — | — | read | — |
+
+Diff from revision 14: group 5 `+39`; group 7 `+39,+11`; group 8 `+10,+39,+11`; group 9 (new) `39,11`. No removals, no change to `Other`, no root grant added to anyone. New collection 39 was created with `All Users` already at No access (same as collection 35 in 2026-08-25 — the old Curate-by-default gotcha did not recur), then set explicitly via the graph PUT regardless.
+
+### Verification
+
+- `/api/collection/graph` re-GET after PUT: byte-matches the target table above; group 1 (`All Users`) has no entry for any collection.
+- `/api/collection` list: five folders in order `1. Yöneticiler → 2. Manager → 3. İthalat/İhracat → 4. Satış → 5. Envanter Yönetimi`, all `location: /`; `_Hesaplama Kaynağı` still `/9/`.
+- Collection contents: 10 now holds `Stok Listesi` (103) alongside 56, 57, 99–102, dashboard 5; 35, 39, 11 all empty.
+- Playwright (admin) root listing renders the five folders in the correct order.
+- **Not done this pass:** no throwaway-account cascade check per group (spec asked only for `/api/collection/graph` verification, which is ground truth and matched). If a live per-group check is wanted later, use isolated browser contexts per the standing rule, never the admin session.

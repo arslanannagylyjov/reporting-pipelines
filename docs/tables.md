@@ -230,6 +230,6 @@ Full stock/product catalog (pricing, supplier, physical dimensions, cost columns
 | Boy | double(14,2) | YES | |
 | Yukseklik | double(14,2) | YES | |
 
-**Cost-column note:** `FabrikaFiyatiUsd` is a cost column, same category as `sales_snapshot`'s `FabrikaFiyati`/`FabrikaTutarUsd`. The Metabase question built on this table (`Stok Listesi`, card 103) exposes it as part of a deliberate full-detail placeholder — see `docs/metabase-permissions.md` for the collection/permission scoping that keeps it restricted to `Director` and `Manager` only, and the standing note that which columns to actually show is a future decision, not made here.
+**Cost-column note:** `FabrikaFiyatiUsd` (plus `Cns_Usd`/`Trk_Usd`) is a cost column, same category as `sales_snapshot`'s `FabrikaFiyati`/`FabrikaTutarUsd`. The Metabase question built on this table (`Stok Listesi`, card 103) exposes it as part of a deliberate full-detail placeholder. As of 2026-08-27 card 103 lives in the `3. İthalat/İhracat` collection and is therefore visible to `Director`, `Manager`, and `Sales/Purchase` (the cascade — see `docs/metabase-permissions.md`); Arslan explicitly accepted this cost-column exposure when it was moved out of the former Director+Manager-only `2. Manager` folder. Which columns to actually show is still a future decision, not made here.
 
 Refreshed nightly at 03:45 by `refresh_stock_details.py`, registered in `monitored_jobs.yml` and covered by the 07:00 daily digest — see `docs/monitoring.md`.

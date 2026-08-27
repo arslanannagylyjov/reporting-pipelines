@@ -357,8 +357,19 @@ Closed the open item from the entries above. Confirmed live first: card 55 ("202
 
 The "Genel Bakış" Tarih-filter thread is now fully closed: filter-aware cards fixed (Part B), fixed KPIs labeled "(Sabit)", `Tarih` default set to `"thisyear"` + required (Part C), card 55 de-hardcoded. Nothing left open from it.
 
+## 2026-08-27 (continued) — Metabase collection reorg: 5-folder cascade, `Satış` group
+
+Restructured the numbered collections 4 → 5 and switched the permission model from "one folder each" to a **cascade** (a group sees its folder + everything below, never above). Direct API (`METABASE_API_KEY`); full detail in `docs/metabase-permissions.md` ("Collection reorg… 2026-08-27") and the Groups table there.
+
+**Assumption caught first:** the spec assumed the instance already ran a cascade — it didn't (live graph rev 14 + the doc both showed one-folder-each). Stopped, flagged, Arslan confirmed the switch **and** accepted that moving `Stok Listesi` into folder 3 exposes its `FabrikaFiyatiUsd`/`Cns_Usd`/`Trk_Usd` cost columns to `Sales/Purchase` (13 members) — a deliberate reversal of the 2026-08-25 Director+Manager-only scoping.
+
+**Changes:** card 103 `Stok Listesi` moved coll 35 → 10. Coll 10 renamed `3. Satış/Satın Alma` → `3. İthalat/İhracat` (Turkish diacritics normalized vs the spec's ASCII). New empty coll 39 `4. Satış` at root. Coll 11 renamed+renumbered `4. Diğer` → `5. Envanter Yönetimi` in one PUT. New group `Satış` (id 9), 0 members. Collection graph rev 15 → 16, cascade applied: Director→all5, Manager→2-5, Sales/Purchase→3-5, Satış→4-5, Other→5; `All Users` still absent everywhere; verified by re-GET matching target exactly. `2. Manager` (coll 35), `4. Satış` (39), `5. Envanter Yönetimi` (11) are all empty now.
+
+**Docs:** `docs/metabase-permissions.md` (Groups table + new dated section), `docs/tables.md` (Stok Listesi cost-column note). `docs/monitoring.md` needs nothing — it documents sync jobs, not collection structure.
+
 ### Next steps
 
+- **`Satış` group provisioning** — created empty 2026-08-27, needs members added when Arslan decides who.
 - **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug, needs reconciling against whatever source produced the manual figure.
 - Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
 - Whether the `job_runs.csv` schema should eventually carry a prune count as a first-class field — flagged, not decided.
