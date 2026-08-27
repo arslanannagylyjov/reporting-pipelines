@@ -345,9 +345,20 @@ Applied via `PUT /api/card/:id` with `{name, description}` only; SQL round-trip-
 
 **Verified live (Playwright MCP):** both renamed titles render on the tab. Cycled `Tarih` through "This year" (default), "Previous 30 days", and "June 2026" — both "(Sabit)" cards stayed pinned at 71.7M / 541.9M throughout while Toplam Satış Adedi, Ortalama Fatura Değeri and İhracat/Yurtiçi Dağılımı (83.7M → 77.4M) moved with the filter. This is now expected, documented, labeled behavior.
 
+## 2026-08-27 (continued) — card 55 hardcoded `2026-01-01` made dynamic
+
+Closed the open item from the entries above. Confirmed live first: card 55 ("2026 Satis Ay Bazinda", `display: pivot`) was still an MBQL query-builder question with filter `[">", ["field", 130], "2026-01-01"]` — a literal year boundary that would silently misbehave from 2027-01-01.
+
+**Fix:** replaced the literal `>` filter with an MBQL **relative-date filter** — `["time-interval", {…}, ["field", {…}, 130], "current", "year"]` — the query-builder-native way to say "from the start of the current year". Kept it MBQL (no native-SQL conversion needed, so the fallback that would have required Arslan's sign-off was not used). Breakout (month(Tarih), Firma), aggregation (sum(TutarTL)) and source-table all confirmed unchanged; `PUT /api/card/55` with `{dataset_query}` only.
+
+**Verified:** ran the old and new filters side by side via `POST /api/dataset` — **byte-identical 24-row output** (no rows dated exactly 2026-01-01 existed, so `>` vs `>=` made no difference now; the point is it now rolls forward on its own). Live on the "Genel Bakış" tab: card 55 renders the Jan–Aug 2026 pivot with unchanged values, no errors; before/after `GET /api/dashboard/3` diff shows 39 dashcards, 6 tabs, per-tab card-id sets identical, only the expected 43/44 "(Sabit)" renames from the prior step. Card 55 will now roll over automatically every January, like card 47.
+
+**Correction to the earlier entries' "next steps":** the dashboard `Yıl`/`Ay` filter defaults (`2026`/`8`) are **not** a stale risk — `~/reporting-scripts/bump_filter_defaults.py` (cron `30 3 1 * *`) already rewrites them to the current year/month every month, via `bump_dashboard_filters()` on dashboard 3, and also bumps the `year`/`month` template-tag defaults on the 9 Günlük/Haftalık cards (80–88). It explicitly leaves `Tarih`/`Firma` untouched, so the new `Tarih` default (`"thisyear"`, relative — never stale) and `required` flag from the earlier entry survive its monthly run. The only genuinely hardcoded year on this tab was card 55's, now fixed.
+
+The "Genel Bakış" Tarih-filter thread is now fully closed: filter-aware cards fixed (Part B), fixed KPIs labeled "(Sabit)", `Tarih` default set to `"thisyear"` + required (Part C), card 55 de-hardcoded. Nothing left open from it.
+
 ### Next steps
 
-- **Card 55's hardcoded `2026-01-01`** (and the dashboard `Yıl`/`Ay` filter defaults `2026`/`8`) — unrelated to the 43/44 decision, a separate still-open item: same class of silent-staleness issue, all roll over wrong on 2027-01-01. Left as-is; worth a deliberate pass to switch to `CURDATE()`-derived boundaries like card 47 uses.
 - **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug, needs reconciling against whatever source produced the manual figure.
 - Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
 - Whether the `job_runs.csv` schema should eventually carry a prune count as a first-class field — flagged, not decided.
