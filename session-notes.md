@@ -334,9 +334,20 @@ A Director-flagged symptom on dashboard 3's default landing tab: "Bu Ay Ciro" re
 
 **Documentation:** only this file. No table/script/cron added; Part B/C changed filter internals only — no card names or collection placement changed — so `docs/tables.md`, `docs/monitoring.md`, `docs/server-architecture.md`, `docs/metabase-permissions.md`, and `README.md` need no change.
 
+## 2026-08-27 (continued) — Bu Ay/Bu Yıl Ciro labeled "(Sabit)" — final resolution
+
+Follow-up to the entry above. Arslan's decision on cards 43/44 is **final, not a leftover bug**: they are deliberately fixed to `CURDATE()`-based current month / current year and are not meant to follow the `Tarih` filter. Made that visible on the dashboard itself rather than only in the query:
+
+- **Card 43** renamed `Bu Ay Ciro` → **`Bu Ay Ciro (Sabit)`**, description set to "Tarih filtresinden bağımsız — her zaman içinde bulunulan ayın cirosu."
+- **Card 44** renamed `Bu Yıl Ciro` → **`Bu Yıl Ciro (Sabit)`**, description "…içinde bulunulan yılın cirosu."
+
+Applied via `PUT /api/card/:id` with `{name, description}` only; SQL round-trip-diffed unchanged on both. Descriptions surface as the ⓘ tooltip on the scalar card (this version has no persistent visible subtitle for `scalar` display).
+
+**Verified live (Playwright MCP):** both renamed titles render on the tab. Cycled `Tarih` through "This year" (default), "Previous 30 days", and "June 2026" — both "(Sabit)" cards stayed pinned at 71.7M / 541.9M throughout while Toplam Satış Adedi, Ortalama Fatura Değeri and İhracat/Yurtiçi Dağılımı (83.7M → 77.4M) moved with the filter. This is now expected, documented, labeled behavior.
+
 ### Next steps
 
-- **Card 55's hardcoded `2026-01-01`** (and the dashboard `Yıl`/`Ay` filter defaults `2026`/`8`) — same class of silent-staleness issue, all roll over wrong on 2027-01-01. Left as-is here per the "leave untouched" decision; worth a deliberate pass to switch to `CURDATE()`-derived boundaries like card 47 uses.
+- **Card 55's hardcoded `2026-01-01`** (and the dashboard `Yıl`/`Ay` filter defaults `2026`/`8`) — unrelated to the 43/44 decision, a separate still-open item: same class of silent-staleness issue, all roll over wrong on 2027-01-01. Left as-is; worth a deliberate pass to switch to `CURDATE()`-derived boundaries like card 47 uses.
 - **Issue B, still open:** the 2,300.11 TL gap between the live ERP view and Arslan's manually-confirmed total for `S 35831`/August — not a sync bug, needs reconciling against whatever source produced the manual figure.
 - Old throwaway test accounts, `stock_details` column exposure, ERP/`reporting_writer` password rotation, container timezone fix, `scripts/sync_engine.py` consolidation, `DovizKodu` normalization, `Other`/`Diğer` rollout, and monitoring-the-watchers — all unchanged/open from above.
 - Whether the `job_runs.csv` schema should eventually carry a prune count as a first-class field — flagged, not decided.
