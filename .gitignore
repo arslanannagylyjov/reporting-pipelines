@@ -7,3 +7,6 @@ __pycache__/
 .playwright-mcp/
 .gstack/
 *.tmp.*
+
+# Point-in-time UI screenshots — sent to Arslan directly, not documentation
+*.png
