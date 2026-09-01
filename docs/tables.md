@@ -296,3 +296,34 @@ Only 5 of the source's 7 columns are pulled. The two `İade` (return-goods) buck
 **Full-replace pattern:** each run does an unconditional `DELETE FROM warehouse_stock` then a chunked `INSERT` (`CHUNK_SIZE = 5000`, matching `customer_last_price`). Not a composite-key `REPLACE INTO` — there's no `Firma` dimension and the ERP source is itself a nightly full-rebuild, so a plain wipe-and-reload is the honest match. **`DELETE`, not `TRUNCATE`:** the task spec called for `TRUNCATE`, but `reporting_writer`'s grant on this table is `SELECT, INSERT, UPDATE, DELETE` with no `DROP` (confirmed via `SHOW GRANTS`), and `TRUNCATE` requires `DROP` in MySQL — same substitution already made for `cek_senet_portfoy` / `vault_movements_daily`. Same end state for a full-replace table. No staging table, no prune step (a full wipe every run makes both moot).
 
 Refreshed nightly at **03:10** by `refresh_warehouse_stock.py` — see `docs/monitoring.md` for the schedule reasoning and the success/failure Telegram alerting. Visible to Metabase as table id 20 in `reporting-db` (schema rescan triggered 2026-08-28); **no question built yet** — report shape is a follow-up from Arslan.
+
+## `supplier_orders_pending`
+
+Open supplier quotes / purchase requests that have **not yet been turned into a firm order** — the "Siparişte" (order-pending) counterpart to `orders_in_transit`. Sourced from the pre-built ERP view `cansun.aa_rapor_sipariste_hepsi` on Natra via `metabase_ro`. The view filters on `EvrakNoSiparis IS NULL`: a line stays in it only while it's still a pending request, and drops out the instant it's converted into an actual order (at which point it belongs in `orders_in_transit` instead). Despite the `cansun` schema prefix the view is a Cansun/Karacan UNION keyed on `Firma`; as of the 2026-09-01 initial sync it returns **2,194 rows, all `Firma = 'Cansun Sipariste'`** — no Karacan lines pending, not a pipeline bug. **Almer is deferred** (not in the view's UNION yet) — same note as `orders_in_transit`: when Almer joins, re-verify the `(Firma, ID)` primary key is still collision-free across all three companies before trusting the first sync.
+
+**Full replace via `DELETE FROM` + chunked `INSERT` (`CHUNK_SIZE = 5000`), not an upsert.** Because a converted request vanishes from the source view without ever reappearing under the same `ID`, a `REPLACE INTO` / upsert would strand every converted line in the table forever (showing as still-pending) — the same voided/reissued-document staleness pattern behind `sales_snapshot`'s prune step. Wiping and reloading the whole table each run sidesteps it entirely, so there is **no prune step and no staging table**. **`DELETE`, not `TRUNCATE`:** `reporting_writer`'s grant here is `SELECT, INSERT, UPDATE, DELETE` with no `DROP` (`SHOW GRANTS` checked up front), and MySQL's `TRUNCATE` needs `DROP` — same substitution as `warehouse_stock` / `cek_senet_portfoy` / `vault_movements_daily`. No pre-flight duplicate check: the live source is 2,194 rows / 2,194 distinct `(Firma, ID)` pairs, and a full wipe-and-reload can't collapse rows the way an upsert on a bad key would — same reasoning as `warehouse_stock` / `customer_last_price`.
+
+Three source columns are aliased with a space in the name in the ERP view — `` `Doviz Fiyat` ``, `` `Doviz Tutar` ``, `` `Evrak Tutari` `` — and map to `DovizFiyat` / `DovizTutar` / `EvrakTutari` on `reporting-db` (verified against `SHOW COLUMNS` on both sides). The sync uses an explicit source-expression → destination-column map rather than `SELECT *`.
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| Firma | varchar(17) | NO | PRI |
+| ID | int | NO | PRI |
+| EvrakNo | varchar(20) | YES | |
+| HesapKodu | varchar(20) | YES | |
+| HesapAciklamasi | varchar(150) | YES | |
+| StokKodu | varchar(30) | YES | |
+| StokAciklamasi | varchar(150) | YES | |
+| Miktar | double(20,6) | YES | |
+| DovizKodu | varchar(20) | YES | |
+| DovizKuru | double(14,6) | YES | |
+| DovizFiyat | double(20,6) | YES | |
+| DovizTutar | double(20,6) | YES | |
+| BelgeTarihi | date | YES | |
+| TeslimTarihi | date | YES | |
+| TeklifNotlari | text | YES | |
+| EvrakTutari | double(20,6) | YES | |
+
+Composite primary key on `(Firma, ID)` — one row per request line per company.
+
+Refreshed nightly at **03:20** by `refresh_supplier_orders_pending.py` — see `docs/monitoring.md` for the schedule reasoning and the failure-only Telegram alerting. Backs the Metabase question **`03_Ithalat_SiparişteÜrünListesi`** (card 105) in the `3. İthalat/İhracat` collection (id 10), a native `SELECT * FROM supplier_orders_pending`, which therefore inherits that folder's cascade (`Director`, `Manager`, `Sales/Purchase`, `Satış` — see `docs/metabase-permissions.md`); no group-level override was created. This table carries no cost column (`FabrikaFiyati`-style), so no boss-only exposure decision was needed.

@@ -24,10 +24,22 @@ jobs:
     script: /home/arslan/reporting-scripts/refresh_supplier_last_purchase.py
     schedule: "0 3 * * *"
     expected_time: "03:00"
+  - name: orders_in_transit
+    script: /home/arslan/reporting-scripts/refresh_orders_in_transit.py
+    schedule: "5 3 * * *"
+    expected_time: "03:05"
+  - name: warehouse_stock
+    script: /home/arslan/reporting-scripts/refresh_warehouse_stock.py
+    schedule: "10 3 * * *"
+    expected_time: "03:10"
   - name: cheque_bond_maturity
     script: /home/arslan/reporting-scripts/refresh_cheque_bond_maturity.py
     schedule: "15 3 * * *"
     expected_time: "03:15"
+  - name: supplier_orders_pending
+    script: /home/arslan/reporting-scripts/refresh_supplier_orders_pending.py
+    schedule: "20 3 * * *"
+    expected_time: "03:20"
   - name: stock_details
     script: /home/arslan/reporting-scripts/refresh_stock_details.py
     schedule: "45 3 * * *"
@@ -40,7 +52,9 @@ jobs:
 
 `stock_details` added 2026-08-25, 30 minutes after `cheque_bond_maturity` (03:15) — checked `job_runs.csv` for `refresh_vault_movements_daily.py`'s recent runs (the job occupying the neighboring 03:30 slot) before picking 03:45: it consistently finishes in ~0.25s, so 15 minutes past it is a wide margin.
 
-`orders_in_transit` (`expected_time: "03:05"`) and `warehouse_stock` (`expected_time: "03:10"`) added 2026-08-28. Both are nightly jobs that had been running since 2026-08-27 / 2026-08-28 but were initially left out of the registry (they each sent their own per-run Telegram message). On 2026-08-28 the per-run *success* pings were removed from both scripts and the jobs were folded into the digest instead — see the `job_runs.csv` section below and each job's own section for the full reasoning. The 03:05 / 03:10 slots were checked against real `job_runs.csv` data before the registry change: `supplier_last_purchase` (03:00) finishes by ~03:00:27, `cheque_bond_maturity` starts 03:15, and the two new jobs themselves run in ~1s (`orders_in_transit`) and ~0.7s (`warehouse_stock`) — no overlap. **The daily digest now covers seven jobs.**
+`orders_in_transit` (`expected_time: "03:05"`) and `warehouse_stock` (`expected_time: "03:10"`) added 2026-08-28. Both are nightly jobs that had been running since 2026-08-27 / 2026-08-28 but were initially left out of the registry (they each sent their own per-run Telegram message). On 2026-08-28 the per-run *success* pings were removed from both scripts and the jobs were folded into the digest instead — see the `job_runs.csv` section below and each job's own section for the full reasoning. The 03:05 / 03:10 slots were checked against real `job_runs.csv` data before the registry change: `supplier_last_purchase` (03:00) finishes by ~03:00:27, `cheque_bond_maturity` starts 03:15, and the two new jobs themselves run in ~1s (`orders_in_transit`) and ~0.7s (`warehouse_stock`) — no overlap.
+
+`supplier_orders_pending` (`expected_time: "03:20"`) added 2026-09-01, in the 03:15 → 03:45 gap between `cheque_bond_maturity` and `stock_details`. This job was registered from day one (no per-run success ping was ever added — it follows the failure-only convention directly). Its first live run took 0.31s for 2,194 rows and `cheque_bond_maturity` (03:15) has always finished in well under a second, so 03:20 leaves a wide margin on both sides. **The daily digest now covers eight jobs.**
 
 `report_job_status.py` reads this file and loops over `jobs` — it never
 hardcodes a job name. `name` **must** match the `job_name` string the script
@@ -78,12 +92,15 @@ additive, not a replacement for that.
 
 Every sync script calls `job_logging.run_job()` the same way, regardless of
 cadence — logging to `job_runs.csv` is universal (13 distinct `job_name`s
-write to it as of 2026-08-28, `warehouse_stock` being the newest). **Seven**
-jobs are listed in `monitored_jobs.yml` and covered by the 07:00 digest below:
-`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`,
-`orders_in_transit` (03:05), `warehouse_stock` (03:10), `cheque_bond_maturity`,
-`stock_details`. All seven are nightly and complete before 07:00, so the
-digest can honestly report on them.
+write to it as of 2026-09-01, `supplier_orders_pending` being the newest — an
+earlier version of this line said "13 as of 2026-08-28" but that count
+included the CSV header row; the real 08-28 figure was 12). **Eight** jobs
+are listed in `monitored_jobs.yml` and covered by the 07:00 digest below, in
+run order: `sales_snapshot` (02:30), `customer_last_price` (02:45),
+`supplier_last_purchase` (03:00), `orders_in_transit` (03:05),
+`warehouse_stock` (03:10), `cheque_bond_maturity` (03:15),
+`supplier_orders_pending` (03:20), `stock_details` (03:45). All eight are
+nightly and complete before 07:00, so the digest can honestly report on them.
 
 The remaining jobs deliberately are **not** in that registry: the intraday
 syncs `vault_status` (hourly), `vault_movements_hourly` (hourly),
@@ -121,9 +138,10 @@ if __name__ == '__main__':
     run_job('sales_snapshot', main)  # or 'customer_last_price', 'supplier_last_purchase', 'cheque_bond_maturity', 'stock_details'
 ```
 
-The other two registry jobs — `orders_in_transit` and `warehouse_stock` —
-keep a thin `try`/`except` around `run_job()` so they can still fire an
-**immediate failure** Telegram alert (they have no success ping):
+The other three registry jobs — `orders_in_transit`, `warehouse_stock` and
+`supplier_orders_pending` — keep a thin `try`/`except` around `run_job()` so
+they can still fire an **immediate failure** Telegram alert (they have no
+success ping):
 
 ```python
 if __name__ == '__main__':
@@ -782,3 +800,76 @@ manual daytime run loaded 17,029 rows, logged `status=ok` (`rows=17029`,
 lists `✅ warehouse_stock: ok — 17029 rows in 0.67s` with no "DID NOT RUN"
 flag. All 7 registry jobs resolved to a logged run (`jobs with no run today:
 []`).
+
+## `refresh_supplier_orders_pending.py` — nightly pending-supplier-orders ("Siparişte") sync (2026-09-01)
+
+Lives on athena in `~/reporting-scripts/refresh_supplier_orders_pending.py`
+(not in this repo), same `.env` / connection-handling convention as every
+other sync script. Syncs `reporting.supplier_orders_pending` (2,194 rows on
+first sync — see `docs/tables.md`) from the ERP view
+`cansun.aa_rapor_sipariste_hepsi`. Another distinct `job_name` in the shared
+`job_runs.csv` schema (13 distinct names as of 2026-09-01).
+
+Cron: `20 3 * * *` — nightly at 03:20, in the 30-minute gap between
+`cheque_bond_maturity` (03:15) and `stock_details` (03:45). `cheque_bond_maturity`
+has always finished in well under a second per `job_runs.csv`, and this job's
+own first run took **0.31s** for 2,194 rows, so 03:20 has a wide margin on
+both sides — worth reconfirming after a few real cron cycles, per usual
+practice here.
+
+**athena timezone is fixed** (`timedatectl` → `Europe/Istanbul (+03)`, clock
+synchronized), so `20 3 * * *` fires at 03:20 Istanbul wall-clock — same
+finding as the `orders_in_transit` / `warehouse_stock` sections above. The
+reporting-db MySQL *container* is still UTC, but this job writes only `date`
+columns (no `datetime`), so that doesn't matter here.
+
+**Full replace via `DELETE FROM` + chunked `INSERT` (`CHUNK_SIZE = 5000`), not
+an upsert.** The source view filters on `EvrakNoSiparis IS NULL` — a pending
+request drops out of the view the moment it's converted to a firm order, and
+never comes back under the same `ID`. An upsert / `REPLACE INTO` would leave
+every converted line stranded in the table forever, showing as still-pending
+(the `sales_snapshot` staleness pattern). A full wipe-and-reload each run
+avoids it with no prune step and no staging table. **`DELETE`, not
+`TRUNCATE`:** `reporting_writer`'s grant on this table is
+`SELECT, INSERT, UPDATE, DELETE` with no `DROP` (`SHOW GRANTS` checked up
+front); `TRUNCATE` needs `DROP` — same substitution as `warehouse_stock` /
+`cek_senet_portfoy` / `vault_movements_daily`.
+
+**No pre-flight duplicate check.** The live source is 2,194 rows / 2,194
+distinct `(Firma, ID)` pairs, and unlike an upsert a full wipe-and-reload
+can't silently collapse rows even if the key assumption were wrong — same
+call as `warehouse_stock` / `customer_last_price`, unlike the `Counter`-based
+guard `orders_in_transit` / `cek_senet_portfoy` need because they upsert.
+
+**Column map:** the ERP view aliases three columns with a space in the name —
+`` `Doviz Fiyat` ``, `` `Doviz Tutar` ``, `` `Evrak Tutari` `` — which the
+script maps to `DovizFiyat` / `DovizTutar` / `EvrakTutari` on `reporting-db`
+via an explicit source-expression → destination-column list (not `SELECT *`),
+verified against `SHOW COLUMNS` on both sides.
+
+**Telegram — failure only; in the 07:00 digest from day one.** No per-run
+success ping was ever added (learning from `orders_in_transit` /
+`warehouse_stock`, which had to have theirs removed). The script keeps only a
+thin `try`/`except` around `run_job('supplier_orders_pending', main)` that
+fires `[supplier_orders_pending] FAILED: <ExceptionType>: <msg>` immediately
+on any crash. Added to `monitored_jobs.yml` with `expected_time: "03:20"`.
+Same bot (`@cansun_reporting_bot`, `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
+from the same `.env`).
+
+**Metabase:** backs the native question `03_Ithalat_SiparişteÜrünListesi`
+(card 105, `SELECT * FROM supplier_orders_pending`, table visualization) in
+the `3. İthalat/İhracat` collection (id 10). No dashboard attachment, no
+group-level permission override — inherits folder 3's existing cascade
+(`Director`, `Manager`, `Sales/Purchase`, `Satış` — see
+`docs/metabase-permissions.md`).
+
+**Verified (2026-09-01):**
+- First manual run: fetched 2,194 rows from the ERP view, deleted the (empty)
+  table, inserted all 2,194, logged `status=ok` (`rows=2194`, `0.31s`) in
+  `job_runs.csv` at 23:48:37. No Telegram message (only the FAILED path
+  exists, not hit).
+- Source / destination row counts match exactly (2,194 = 2,194), all
+  `Firma = 'Cansun Sipariste'` (no Karacan pending; Almer deferred).
+- `(Firma, ID)` collision-free on the live source (2,194 distinct pairs).
+- Card 105 confirmed via `GET /api/card/105`: `collection_id: 10`,
+  `query_type: native`, not archived, 16 result columns matching the table.

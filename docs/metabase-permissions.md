@@ -755,3 +755,9 @@ Display-name rename only — `PUT /api/card/<id>` with the `name` field alone, n
 Verified via `GET /api/card/<id>` on all four after the writes (not the admin UI list): each returned the new `name`, `collection_id: 10`, `query_type: native`, `updated_at` 2026-08-28T07:06Z. The `Groups` table at the top of this doc was updated to the new names; the older dated sections below (`Tedarikçi Son Alış Fiyatı added...` 2026-08-14, `Stok Listesi question created` 2026-08-25, `Collection reorg...` 2026-08-27, and the earlier Boss-Dashboard-era mentions) are the chronological log and keep the names those cards had on those dates — this section is the mapping to their current names.
 
 The cost-column exposure story for card 103 (`01_Genel_StokListesi`) is unaffected — still governed by collection 10's cascade, still an open column-selection decision, exactly as before the rename.
+
+## `03_Ithalat_SiparişteÜrünListesi` (card 105) added to `3. İthalat/İhracat` (2026-09-01)
+
+New native question `SELECT * FROM supplier_orders_pending` (table visualization), backing the `supplier_orders_pending` sync pipeline added the same day (see `docs/tables.md` / `docs/monitoring.md`). Created directly in collection 10 (`3. İthalat/İhracat`) — **no permission-graph change, no new group, no GRANTs, no collection move.** It inherits folder 10's existing cascade exposure (`Director`, `Manager`, `Sales/Purchase`, `Satış`), same as its siblings 56 / 57 / 103 / 104. The table carries no cost column, so no boss-only exposure question applied.
+
+Verified via `GET /api/card/105`: `collection_id: 10`, `query_type: native`, `archived: false`, 16 result columns matching the `supplier_orders_pending` table. Collection graph left at revision 16 (unchanged from the 2026-08-27 reorg).
