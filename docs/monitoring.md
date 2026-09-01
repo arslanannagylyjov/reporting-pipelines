@@ -38,7 +38,9 @@ jobs:
 
 `cheque_bond_maturity` added 2026-08-19, 15 minutes after `supplier_last_purchase` (03:00) — same margin reasoning: all three earlier jobs finish in well under 20s each, and the new job itself ran in 0.19s on its first live run (222 source rows), so 03:15 leaves a wide margin. Worth reconfirming actual runtime after a few real cron cycles rather than treating 03:15 as permanently final, per usual practice when adding a job here.
 
-`stock_details` added 2026-08-25, 30 minutes after `cheque_bond_maturity` (03:15) — checked `job_runs.csv` for `refresh_vault_movements_daily.py`'s recent runs (the job occupying the neighboring 03:30 slot) before picking 03:45: it consistently finishes in ~0.25s, so 15 minutes past it is a wide margin. This is now the fifth job in the registry — the daily digest covers five jobs, not four.
+`stock_details` added 2026-08-25, 30 minutes after `cheque_bond_maturity` (03:15) — checked `job_runs.csv` for `refresh_vault_movements_daily.py`'s recent runs (the job occupying the neighboring 03:30 slot) before picking 03:45: it consistently finishes in ~0.25s, so 15 minutes past it is a wide margin.
+
+`orders_in_transit` (`expected_time: "03:05"`) and `warehouse_stock` (`expected_time: "03:10"`) added 2026-08-28. Both are nightly jobs that had been running since 2026-08-27 / 2026-08-28 but were initially left out of the registry (they each sent their own per-run Telegram message). On 2026-08-28 the per-run *success* pings were removed from both scripts and the jobs were folded into the digest instead — see the `job_runs.csv` section below and each job's own section for the full reasoning. The 03:05 / 03:10 slots were checked against real `job_runs.csv` data before the registry change: `supplier_last_purchase` (03:00) finishes by ~03:00:27, `cheque_bond_maturity` starts 03:15, and the two new jobs themselves run in ~1s (`orders_in_transit`) and ~0.7s (`warehouse_stock`) — no overlap. **The daily digest now covers seven jobs.**
 
 `report_job_status.py` reads this file and loops over `jobs` — it never
 hardcodes a job name. `name` **must** match the `job_name` string the script
@@ -50,7 +52,7 @@ registry and the log.
 2. In the new script, wrap its `main()` (which should `return` a row count)
    with `job_logging.run_job('<name>', main)` in the `if __name__ ==
    '__main__':` block — matching the `name` used in step 1.
-3. Add the job's own cron line, same pattern as the existing two.
+3. Add the job's own cron line, same pattern as the existing ones.
 
 Nothing in `report_job_status.py` needs to change.
 
@@ -75,23 +77,65 @@ cron log (`refresh.log` etc.) exactly as before; the structured log is
 additive, not a replacement for that.
 
 Every sync script calls `job_logging.run_job()` the same way, regardless of
-cadence — logging to `job_runs.csv` is universal. Only the five *daily* jobs
-(`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`,
-`cheque_bond_maturity`, `stock_details`) are listed in `monitored_jobs.yml`
-and covered by the 07:00 digest below. The intraday jobs — `vault_status`
-(hourly), `vault_movements_hourly` (hourly), `vault_movements_daily`
-(nightly), `cek_senet_portfoy` (every 2 hours) — deliberately are **not** in
-that registry, because their first daily run postdates the 07:00 digest and
-would falsely report "DID NOT RUN." They still write to `job_runs.csv` via
-`run_job()` and use their own failure-only Telegram alerting instead (see
-each job's own section further down this file).
+cadence — logging to `job_runs.csv` is universal (13 distinct `job_name`s
+write to it as of 2026-08-28, `warehouse_stock` being the newest). **Seven**
+jobs are listed in `monitored_jobs.yml` and covered by the 07:00 digest below:
+`sales_snapshot`, `customer_last_price`, `supplier_last_purchase`,
+`orders_in_transit` (03:05), `warehouse_stock` (03:10), `cheque_bond_maturity`,
+`stock_details`. All seven are nightly and complete before 07:00, so the
+digest can honestly report on them.
 
-The five daily jobs end with the plain form:
+The remaining jobs deliberately are **not** in that registry: the intraday
+syncs `vault_status` (hourly), `vault_movements_hourly` (hourly),
+`vault_movements_daily` (nightly), `cek_senet_portfoy` (every 2 hours) — their
+first daily run *postdates* the 07:00 digest, so registering them would
+falsely report "DID NOT RUN" every morning — and the monthly
+`bump_filter_defaults.py` (`30 3 1 * *`), which would falsely report "DID NOT
+RUN" on the ~29 days a month it isn't scheduled. All of them use failure-only
+Telegram alerting of their own instead.
+
+**`orders_in_transit` and `warehouse_stock` were added to the registry on
+2026-08-28** (they had been out of it initially). Both run nightly at
+03:05 / 03:10 — well before 07:00 — so the false-"DID NOT RUN" problem never
+applied to them. Each originally sent its own Telegram message on *both*
+success and failure, which is why they were first kept out; on 2026-08-28
+that was reconsidered — a nightly success ping per job is the exact noise the
+2026-08-19 consolidation removed for the original jobs — so the per-run
+success `send_telegram()` call was **removed from both scripts** and they were
+folded into the 07:00 digest like every other nightly job. They still send a
+`[orders_in_transit]` / `[warehouse_stock]`-prefixed Telegram alert
+**immediately on failure** (pre-flight duplicate-check abort or any
+unexpected exception) — matching the failure-only convention every sync job
+now follows. `report_job_status.py` needed no change (it just loops the
+registry).
+
+All non-registry jobs still write to `job_runs.csv` via `run_job()` and do
+their own failure-only Telegram alerting (see each job's own section further
+down this file).
+
+The five original daily jobs end with the plain form:
 
 ```python
 if __name__ == '__main__':
     from job_logging import run_job
     run_job('sales_snapshot', main)  # or 'customer_last_price', 'supplier_last_purchase', 'cheque_bond_maturity', 'stock_details'
+```
+
+The other two registry jobs — `orders_in_transit` and `warehouse_stock` —
+keep a thin `try`/`except` around `run_job()` so they can still fire an
+**immediate failure** Telegram alert (they have no success ping):
+
+```python
+if __name__ == '__main__':
+    from job_logging import run_job
+    try:
+        run_job('orders_in_transit', main)
+    except Exception as e:
+        try:
+            send_telegram(f"[orders_in_transit] FAILED: {type(e).__name__}: {e}")
+        except Exception:
+            print("Telegram alert also failed to send.")
+        sys.exit(1)
 ```
 
 `main()` itself is unchanged except that it now `return`s the total row
@@ -550,3 +594,191 @@ run.
 - Table-wide re-check: rows with `Tarih >= cutoff` in `sales_snapshot` (68,007) exactly equals the fresh ERP fetch's row count — zero orphans anywhere in the table, not just for `S 35831`.
 - Rows older than the rolling window structurally cannot be touched (both the merge and the prune are scoped to `Tarih >= cutoff`) — confirmed live: 618,498 pre-window rows, spot-checked a few directly (e.g. ID 495, 2023-09-06, unchanged).
 - Spot-checked known-good current IDs (152769, 152775, 152780 — the real, still-current `S 35831` Almer invoices) survived the prune untouched.
+
+## `refresh_orders_in_transit.py` — nightly in-transit ("Yolda") orders sync (2026-08-27)
+
+Lives on athena in `~/reporting-scripts/refresh_orders_in_transit.py` (not in
+this repo), same `.env`/connection-handling convention as every other sync
+script. Syncs `reporting.orders_in_transit` (1,852 rows on first sync — see
+`docs/tables.md`) from the ERP view `cansun.aa_rapor_yolda_hepsi`. This is the
+**12th** distinct `job_name` in the shared `job_runs.csv` schema.
+
+Cron: `5 3 * * *` — nightly at 03:05, in the gap between `customer_last_price`
+(02:45) and `stock_details` (03:45). Collision check before finalizing, from
+`job_runs.csv`: the nearest neighbour is `supplier_last_purchase` at 03:00,
+which starts ~03:00:14 and finishes in ~12s (done well before 03:01);
+`cheque_bond_maturity` at 03:15 is untouched. This job's own first live run
+took **1.00s** for 1,852 rows, so 03:05 has a wide margin on both sides —
+worth reconfirming after a few real cron cycles rather than treating it as
+permanently final, per usual practice here.
+
+**athena timezone — checked, and it's fixed:** `timedatectl` on athena now
+reports `Europe/Istanbul (+03)` with the clock synchronized, so `5 3 * * *`
+fires at 03:05 Istanbul wall-clock as intended. The old project note about
+athena still running UTC (which would have fired this 3 hours late) no longer
+applies — verified live on 2026-08-27, not assumed.
+
+**Mandatory pre-flight duplicate check:** same pattern as
+`cek_senet_portfoy` — before touching the destination the script fetches all
+source rows and does a Python-side `Counter` over `(Firma, ID)` (the table's
+primary key), raising `RuntimeError` with the offending group count if any
+key repeats. The exception flows through the normal failure path
+(`job_logging.run_job` → `status=fail` in `job_runs.csv` → `[orders_in_transit]
+FAILED:` Telegram → non-zero exit), writing **nothing** to the destination.
+Rationale: `(Firma, ID)` uniqueness is an assumption about the source view,
+and a chunked `REPLACE INTO` on top of a collision would silently collapse
+real rows. Verified collision-free on the live 1,852-row source (1,852
+distinct pairs); the raise path itself is code-review-only (fabricating a
+collision needs a write to the read-only ERP source).
+
+**`REPLACE INTO`, not `TRUNCATE`:** `reporting_writer` has
+`SELECT, INSERT, UPDATE, DELETE` but no `DROP` on `orders_in_transit`
+(confirmed live via `SHOW GRANTS`), same as `cek_senet_portfoy` /
+`supplier_last_purchase`. Chunked `REPLACE INTO` on `(Firma, ID)`,
+`CHUNK_SIZE = 5000` matching `customer_last_price`. No staging table.
+
+**Prune step, built in from day one:** after the upsert the script reads back
+every `(Firma, ID)` in `orders_in_transit`, subtracts the set of keys this
+run pulled — held in **one** shared in-memory variable (`pulled_keys`), never
+re-queried from a second source call that could drift from the fetch, the
+same once-and-reuse intent as `sales_snapshot`'s shared cutoff — and
+`DELETE`s the difference in chunks. This matters here specifically: an order
+leaves "Yolda" status (its `SiparisDurumu`/`Kalan` changes on receipt) and
+drops out of the source view without ever reappearing under the same `ID`, so
+`REPLACE INTO` alone would leave every received order in the table forever.
+
+**Logging split, same convention as `sales_snapshot`:** `main()` returns only
+the final table row count, so `job_runs.csv`'s `rows` field keeps its
+cross-job meaning. The prune count goes to stdout (`Pruned N stale row(s)...`)
+and is captured in `~/reporting-scripts/refresh_orders_in_transit.log` (this
+job's own cron log), **not** added as a column to `job_runs.csv`.
+
+**Telegram — failure only; in the 07:00 digest (changed 2026-08-28):**
+originally this job sent a Telegram message on *both* success and failure
+(per its task spec) and was kept out of `monitored_jobs.yml` for that reason.
+On 2026-08-28 that was reversed — a nightly per-job success ping is the exact
+noise the 2026-08-19 consolidation removed for the original jobs, and since
+`orders_in_transit` runs at 03:05 (before the 07:00 digest) there was never a
+false-"DID NOT RUN" obstacle to registering it. The success-path
+`send_telegram()` call was removed; the script now keeps only a thin
+`try`/`except` around `run_job()` that fires `[orders_in_transit] FAILED:
+<ExceptionType>: <msg>` **immediately on any crash** — including the
+pre-flight duplicate-check abort (a `RuntimeError` raised inside `main()`,
+re-raised by `run_job`). Same bot (`@cansun_reporting_bot`,
+`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` from the same `.env`). Added to
+`monitored_jobs.yml` with `expected_time: "03:05"`, so the 07:00 digest now
+reports its row count / status like every other nightly job.
+
+**Metabase:** backs the native question `Yoldaki Ürün Listesi` (card 104) in
+the `3. İthalat/İhracat` collection (id 10), querying `orders_in_transit`
+directly. No dashboard attachment. No group-level permission override — it
+inherits folder 3's existing cascade (`Director`, `Manager`,
+`Sales/Purchase`, `Satış` — see `docs/metabase-permissions.md`).
+
+**Verified (2026-08-27):**
+- First manual run: fetched 1,852 rows from the ERP view, upserted all 1,852,
+  pruned 0, logged `status=ok` (`rows=1852`, `1.00s`) in `job_runs.csv`. (Under
+  the original both-success-and-failure design it also sent the
+  `[orders_in_transit] OK: 1852 rows in transit.` Telegram — removed 2026-08-28.)
+- Prune path: inserted a synthetic stale row (`Firma='Cansun Yolda'`,
+  `ID=-999`) directly, re-ran — script reported `Pruned 1 stale row(s)`, table
+  back to 1,852.
+- Idempotency: a third clean run on unchanged data upserted 1,852, pruned 0,
+  left the table at exactly 1,852.
+- Almer is not in the source view yet — when it is added, the `(Firma, ID)`
+  PK must be re-verified collision-free across all three companies (noted in
+  `docs/tables.md`); the pre-flight check will abort rather than corrupt if it
+  isn't.
+
+**Re-verified (2026-08-28, after removing the success ping + registry add):**
+manual daytime run loaded 1,852 rows, logged `status=ok` (`rows=1852`,
+`0.83s`) in `job_runs.csv`, sent **no** Telegram message. `report_job_status.py`
+dry run (registry + today's log → `build_message`, no send) now lists
+`✅ orders_in_transit: ok — 1852 rows in 0.83s` with no "DID NOT RUN" flag.
+Failure path unchanged (the outer `except` still calls
+`send_telegram("[orders_in_transit] FAILED: …")`).
+
+## `refresh_warehouse_stock.py` — nightly warehouse on-hand quantities sync (2026-08-28)
+
+Lives on athena in `~/reporting-scripts/refresh_warehouse_stock.py` (not in
+this repo), same `.env`/connection-handling convention as every other sync
+script. Syncs `reporting.warehouse_stock` (17,029 rows on first sync — see
+`docs/tables.md`) from the ERP table `cansun.eryaz_zeus_stok_slim`. This is the
+**13th** distinct `job_name` in the shared `job_runs.csv` schema.
+
+Cron: `10 3 * * *` — nightly at 03:10, in the 10-minute gap between
+`orders_in_transit` (03:05) and `cheque_bond_maturity` (03:15). Checked
+against real cron data, not assumed: the 2026-08-28 cron run of
+`orders_in_transit` started 03:05:03 and finished in ~1s per `job_runs.csv`,
+and `warehouse_stock`'s own first manual run took **0.62s** for 17,029 rows
+(0.70s on a second run), so 03:10 clears `orders_in_transit` by minutes and
+leaves ~5 minutes before `cheque_bond_maturity`. **Still worth reconfirming
+once a few real 03:10 cron cycles exist** — per the spec, "approximately
+03:10 is safe" is not something to take on faith long-term; compare the
+actual `orders_in_transit` and `warehouse_stock` start/finish times in
+`job_runs.csv` after it's been running alongside for a few nights.
+
+**athena timezone — checked, and it's fixed:** `timedatectl` reports
+`Europe/Istanbul (+03)`, clock synchronized, so `10 3 * * *` fires at 03:10
+Istanbul wall-clock. Same finding as the `orders_in_transit` section above —
+the old "athena still on UTC" project note no longer applies to the host
+(verified live 2026-08-28). The reporting-db MySQL *container* is still UTC,
+but this job writes no timestamp column, so that doesn't matter here.
+
+**Full replace via `DELETE` + chunked `INSERT`, not `TRUNCATE`:** the task
+spec said `TRUNCATE` (pointing at `customer_last_price`'s pattern), but
+`customer_last_price` has a `DROP` grant and `warehouse_stock` does not —
+`reporting_writer`'s grant here is `SELECT, INSERT, UPDATE, DELETE`
+(confirmed via `SHOW GRANTS FOR CURRENT_USER()` before writing the script,
+not discovered via a failed run this time), and MySQL's `TRUNCATE` needs
+`DROP`. So an unconditional `DELETE FROM warehouse_stock` then chunked
+`INSERT` (`CHUNK_SIZE = 5000`), same substitution already used by
+`cek_senet_portfoy` / `vault_movements_daily`, same end state for a
+full-replace table. Not a `REPLACE INTO` upsert: no `Firma` dimension, single
+row per `StokKodu`, and the ERP source is itself a nightly full-rebuild, so
+wipe-and-reload is the honest match. No staging table, no prune step.
+
+**Column projection:** the `SELECT` pulls only 5 of the source's 7 columns —
+`Code, QTY_200, QTY_210, QTY_500, QTY_510` — and renames them on write
+(`Code→StokKodu`, `QTY_200→Catalca`, `QTY_210→CatalcaMalKabul`,
+`QTY_500→Merkez`, `QTY_510→MerkezMalKabul`). `QTY_230` / `QTY_530` (the İade
+buckets) are excluded by design per Arslan — see `docs/tables.md`.
+
+**Telegram — failure only; in the 07:00 digest (changed 2026-08-28):** the
+job originally sent its own `[warehouse_stock]`-prefixed Telegram on *both*
+success and failure (per its task spec) and was left out of
+`monitored_jobs.yml` for that reason. On 2026-08-28 — the same day it was
+built — that was reversed alongside `orders_in_transit`: the per-run success
+ping is the noise the 2026-08-19 consolidation removed, and the job runs at
+03:10 (before the 07:00 digest), so nothing blocked registering it. The
+success-path `send_telegram()` call was removed; the script keeps only a
+thin `try`/`except` around `run_job()` firing `[warehouse_stock] FAILED:
+<ExceptionType>: <msg>` **immediately on any crash**. Added to
+`monitored_jobs.yml` with `expected_time: "03:10"`; still calls
+`job_logging.run_job('warehouse_stock', main)` so every run lands in
+`job_runs.csv` and the 07:00 digest. Same bot (`@cansun_reporting_bot`,
+`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` from the same `.env`).
+
+**Metabase:** the table was made visible for future native-SQL question
+building via a schema rescan (`POST /api/database/3/sync_schema` on
+`reporting-db`, 2026-08-28) — it now shows as table id 20 with all 5 fields.
+**No question or dashboard was built** — report shape is a follow-up from
+Arslan, per the spec.
+
+**Verified (2026-08-28, initial build):**
+- First manual run: fetched 17,029 rows, inserted all 17,029, logged
+  `status=ok` (`rows=17029`, `0.62s`) in `job_runs.csv`. (Under the original
+  both-success-and-failure design it also sent the `[warehouse_stock] OK:
+  17029 rows loaded.` Telegram — removed later the same day.)
+- Column mapping spot-checked against the ERP source for 3 codes
+  (`3RG_10109`, `AE_V91925`, `AE_V91926`) — all 5 mapped values matched
+  exactly.
+- Idempotency: a second run reloaded 17,029 → 17,029, `0.70s`, no drift.
+- `DELETE` path confirmed working under the no-`DROP` grant (no `1142` error).
+
+**Re-verified (2026-08-28, after removing the success ping + registry add):**
+manual daytime run loaded 17,029 rows, logged `status=ok` (`rows=17029`,
+`0.67s`), sent **no** Telegram message. `report_job_status.py` dry run now
+lists `✅ warehouse_stock: ok — 17029 rows in 0.67s` with no "DID NOT RUN"
+flag. All 7 registry jobs resolved to a logged run (`jobs with no run today:
+[]`).

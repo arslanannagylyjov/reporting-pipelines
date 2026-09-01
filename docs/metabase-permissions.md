@@ -17,8 +17,8 @@ is the current authority). `User` was renamed to `Other`, and a new
 | Group | Metabase group ID | Intended scope |
 |---|---|---|
 | **Director** | 5 | Read access to all five numbered folders — `1. Yöneticiler`, `2. Manager`, `3. İthalat/İhracat`, `4. Satış`, `5. Envanter Yönetimi` — plus View-only on `_Hesaplama Kaynağı` (formerly `Boss Dashboard`, renamed and nested under `1. Yöneticiler` 2026-08-13). View-only on data — cannot build new questions (see Data permissions). Not a superuser/admin group; zero implicit access to anything not explicitly granted. |
-| **Manager** | 8 | Added 2026-08-25. Cascade read: `2. Manager` + `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`2. Manager` only" on 2026-08-27). One real member — Nursiman (also a `Sales/Purchase` member). `2. Manager` is currently empty (its only content, `Stok Listesi`, moved to `3. İthalat/İhracat` on 2026-08-27). |
-| **Sales/Purchase** | 7 | Added 2026-08-13. Cascade read: `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`3.` only" on 2026-08-27). Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10. As of 2026-08-27 this group can see `Stok Listesi` (card 103) and its `FabrikaFiyatiUsd`/`Cns_Usd`/`Trk_Usd` cost columns — a deliberate reversal of the prior Director+Manager-only scoping, confirmed by Arslan. |
+| **Manager** | 8 | Added 2026-08-25. Cascade read: `2. Manager` + `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`2. Manager` only" on 2026-08-27). One real member — Nursiman (also a `Sales/Purchase` member). `2. Manager` is currently empty (its only content, `01_Genel_StokListesi` (card 103, renamed from `Stok Listesi` on 2026-08-28), moved to `3. İthalat/İhracat` on 2026-08-27). |
+| **Sales/Purchase** | 7 | Added 2026-08-13. Cascade read: `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`3.` only" on 2026-08-27). Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10. As of 2026-08-27 this group can see `01_Genel_StokListesi` (card 103, renamed from `Stok Listesi` on 2026-08-28) and its `FabrikaFiyatiUsd`/`Cns_Usd`/`Trk_Usd` cost columns — a deliberate reversal of the prior Director+Manager-only scoping, confirmed by Arslan. |
 | **Satış** | 9 | Added 2026-08-27. Cascade read: `4. Satış` + `5. Envanter Yönetimi`. Zero members — provisioning pending. |
 | **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `5. Envanter Yönetimi` only (bottom of the cascade; was `4. Diğer`, renamed+renumbered 2026-08-27), which is currently empty. No real members yet. |
 
@@ -740,3 +740,18 @@ Diff from revision 14: group 5 `+39`; group 7 `+39,+11`; group 8 `+10,+39,+11`; 
 - Collection contents: 10 now holds `Stok Listesi` (103) alongside 56, 57, 99–102, dashboard 5; 35, 39, 11 all empty.
 - Playwright (admin) root listing renders the five folders in the correct order.
 - **Not done this pass:** no throwaway-account cascade check per group (spec asked only for `/api/collection/graph` verification, which is ground truth and matched). If a live per-group check is wanted later, use isolated browser contexts per the standing rule, never the admin session.
+
+## Four `3. İthalat/İhracat` questions renamed to a numbered scheme (2026-08-28)
+
+Display-name rename only — `PUT /api/card/<id>` with the `name` field alone, no collection moves, no permission-graph changes, no GRANTs. Collection 10's cascade exposure (`Director` / `Manager` / `Sales/Purchase` / `Satış`) is unchanged; all four cards stayed `collection_id: 10`, `query_type: native`.
+
+| Card ID | Old name | New name |
+|---|---|---|
+| 56 | `Müşteri Son Fiyat Sorgusu` | `02_Ihracat_MüşteriSonFiyat` |
+| 103 | `Stok Listesi` | `01_Genel_StokListesi` |
+| 57 | `Tedarikçi Son Alış Fiyatı` | `02_Ihracat_SonAlışTedarikçiFiyat` |
+| 104 | `Yoldaki Ürün Listesi` | `03_Ithalat_YoldakiÜrünListesi` |
+
+Verified via `GET /api/card/<id>` on all four after the writes (not the admin UI list): each returned the new `name`, `collection_id: 10`, `query_type: native`, `updated_at` 2026-08-28T07:06Z. The `Groups` table at the top of this doc was updated to the new names; the older dated sections below (`Tedarikçi Son Alış Fiyatı added...` 2026-08-14, `Stok Listesi question created` 2026-08-25, `Collection reorg...` 2026-08-27, and the earlier Boss-Dashboard-era mentions) are the chronological log and keep the names those cards had on those dates — this section is the mapping to their current names.
+
+The cost-column exposure story for card 103 (`01_Genel_StokListesi`) is unaffected — still governed by collection 10's cascade, still an open column-selection decision, exactly as before the rename.

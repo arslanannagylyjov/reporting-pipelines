@@ -367,6 +367,53 @@ Restructured the numbered collections 4 → 5 and switched the permission model 
 
 **Docs:** `docs/metabase-permissions.md` (Groups table + new dated section), `docs/tables.md` (Stok Listesi cost-column note). `docs/monitoring.md` needs nothing — it documents sync jobs, not collection structure.
 
+## 2026-08-27 (continued) — `orders_in_transit` pipeline (Cansun/Karacan "Yolda" report)
+
+New 12th sync job. `~/reporting-scripts/refresh_orders_in_transit.py` on athena syncs `reporting.orders_in_transit` (PK `(Firma, ID)`) from ERP view `cansun.aa_rapor_yolda_hepsi` — cron `5 3 * * *` (03:05, between `customer_last_price` 02:45 and `stock_details` 03:45). Chunked `REPLACE INTO` (no DROP grant), `(Firma, ID)` pre-flight duplicate check (mirrors `cek_senet_portfoy`), prune step built in from day one (one shared `pulled_keys` set drives both the upsert and the DELETE-what's-missing prune — the `sales_snapshot` staleness pattern). Telegram `[orders_in_transit]` on both success and failure (per spec); kept out of `monitored_jobs.yml` because that daily success ping already covers "did it run." First live run: 1,852 rows in 1.00s, all `Firma='Cansun Yolda'` (no Karacan in transit yet; Almer deferred — PK must be re-verified collision-free when Almer joins). Prune path tested with a synthetic stale row; idempotency confirmed.
+
+**athena host timezone is now `Europe/Istanbul (+03)` — verified live via `timedatectl`, clock synced.** The long-standing "athena still on UTC" assumption no longer holds for the host, so `5 3 * * *` fires at 03:05 Istanbul wall-clock as intended. The reporting-db MySQL *container* is still UTC (unchanged) — that's the item still on the next-steps list.
+
+**Metabase:** native question `Yoldaki Ürün Listesi` (card 104) in `3. İthalat/İhracat` (coll 10), querying `orders_in_transit` directly, no dashboard, inherits folder-3 cascade, no group override. (Renamed to `03_Ithalat_YoldakiÜrünListesi` the next day — see below.)
+
+**Docs:** `docs/tables.md` (new `orders_in_transit` section), `docs/monitoring.md` (12-job count + new job section). Script lives only on athena (not git-tracked, per convention). Docs left uncommitted for Arslan.
+
+## 2026-08-28 — Four `3. İthalat/İhracat` questions renamed to a numbered scheme
+
+Display-name rename only via `PUT /api/card/<id>` (name field alone) — no collection moves, no permission changes, no GRANTs. Verified each via `GET /api/card/<id>` (not the admin UI list): new name live, `collection_id: 10` and `query_type: native` unchanged on all four.
+
+| Card | Old name | New name |
+|---|---|---|
+| 56 | `Müşteri Son Fiyat Sorgusu` | `02_Ihracat_MüşteriSonFiyat` |
+| 103 | `Stok Listesi` | `01_Genel_StokListesi` |
+| 57 | `Tedarikçi Son Alış Fiyatı` | `02_Ihracat_SonAlışTedarikçiFiyat` |
+| 104 | `Yoldaki Ürün Listesi` | `03_Ithalat_YoldakiÜrünListesi` |
+
+**Docs:** `docs/metabase-permissions.md` (Groups table updated to new names + new dated section with the full mapping; older chronological-log sections keep the period-correct names by design — the doc's own stated model is "table is current authority, dated sections are history"). `docs/tables.md` (the two card references for 103 and 104 updated inline). Redacted user names in the permissions doc untouched.
+
+## 2026-08-28 (continued) — `warehouse_stock` sync pipeline
+
+13th sync job. `~/reporting-scripts/refresh_warehouse_stock.py` on athena syncs `reporting.warehouse_stock` (PK `StokKodu`, **no `Firma` dimension** — one row per product) from ERP table `cansun.eryaz_zeus_stok_slim` — cron `10 3 * * *` (03:10, between `orders_in_transit` 03:05 and `cheque_bond_maturity` 03:15). Pulls 5 of 7 source cols, renamed on write: `Code→StokKodu`, `QTY_200→Catalca`, `QTY_210→CatalcaMalKabul`, `QTY_500→Merkez`, `QTY_510→MerkezMalKabul`; İade buckets `QTY_230`/`QTY_530` excluded per Arslan.
+
+**Full replace via `DELETE FROM` + chunked `INSERT`, not `TRUNCATE`:** spec said `TRUNCATE` (per `customer_last_price`), but that table has a `DROP` grant and `warehouse_stock` doesn't (`SHOW GRANTS` checked up front) — same `DELETE` substitution as `cek_senet_portfoy`/`vault_movements_daily`. No upsert/staging/prune — ERP source is a nightly full-rebuild itself. Telegram `[warehouse_stock]` on success + failure; out of `monitored_jobs.yml`, same rationale as `orders_in_transit`.
+
+**Metabase:** schema rescan triggered (`POST /api/database/3/sync_schema`), table now visible as id 20 with all 5 fields. **No question built** — Arslan will spec report shape in a follow-up.
+
+First run: 17,029 rows in 0.62s, column mapping spot-checked against ERP (3 codes, exact match), idempotency confirmed (17,029 → 17,029). **Docs:** `docs/tables.md` (new section), `docs/monitoring.md` (13-job count + new job section). Script lives only on athena. Docs left uncommitted.
+
+## 2026-08-28 (continued) — "Tedarikçiye Göre Aylık Satış" made "(Sabit)"; Telegram-digest fix BLOCKED
+
+**STEP 2 done — card 54 on dashboard 3, "Ürünler & Müşteriler" tab.** It was a required-no-fallback `{{tarih}}` field filter (same bug class as the 4 cards fixed 2026-08-27), so "This Year" collapsed its intended full 2023-09→2026-08 supplier-mix history to the current year. Fix, all via `METABASE_API_KEY`:
+- Card 54 SQL: dropped the `{{tarih}}` tag entirely — CTE and main query now `WHERE 1=1 [[AND Firma = {{firma}}]]` (`{{firma}}` optional kept as-is). Tag removed from `template-tags` and card `parameters`.
+- `PUT /api/dashboard/3`: removed the `d147204a` (Tarih) entry from dashcard 49's `parameter_mappings`, kept `65fdc762` (Firma). Re-GET diff: only dashcard 49 changed, 39 dashcards / 6 tabs / dashboard params all intact.
+- Renamed → **"Tedarikçiye Göre Aylık Satış (Sabit)"**, description "Tarih filtresinden bağımsız — her zaman mevcut tüm geçmişi (tüm yıllar, tüm aylar) gösterir." (matches 43/44).
+- **Verified:** card 54 only lives on dashboard 3 (`GET /api/card/54/dashboards`). With `Tarih=thismonth`: card 54 returns all 36 months (2023-09..2026-08); neighbors 50/51 move with the filter (thismonth vs thisyear totals differ). Playwright (admin session): tab renders, "(Sabit)" title live, multi-year bar chart intact under "This month".
+
+**STEP 1 (Telegram digest fix) — initially BLOCKED, then done 2026-08-28 after Arslan confirmed.** The spec's premise ("orders_in_transit and warehouse_stock already appear in the 07:00 digest") was **false** — `report_job_status.py` loops strictly over `monitored_jobs.yml`, which held only the original 5 jobs. Per the spec's own instruction I stopped and reported; Arslan approved the recommended path. Changes made:
+- `monitored_jobs.yml` (on athena, backed up to `monitored_jobs.yml.bak.20260828`): added `orders_in_transit` (`expected_time: "03:05"`) and `warehouse_stock` (`expected_time: "03:10"`), in time order → now 7 jobs.
+- `refresh_orders_in_transit.py` / `refresh_warehouse_stock.py` (backed up `*.bak.20260828`): removed the success-path `send_telegram("[…] OK: …")` call. Kept the outer `try`/`except` firing `[…] FAILED:` on any crash (covers the pre-flight duplicate abort + unexpected errors). `run_job()` call unchanged.
+- `docs/monitoring.md`: rewrote the "which jobs are / aren't in the registry" section (old rationale replaced, not left alongside), updated both per-job sections + the `__main__`-shape example + job-count references.
+- **Verified:** manual daytime run of both — exit 0, new `job_runs.csv` rows (`orders_in_transit ok 1852 0.83s`, `warehouse_stock ok 17029 0.67s`), **no Telegram** (only `send_telegram` left in each script is the FAILED path, not hit). `report_job_status.py` dry run (`load_registry` + `load_today_runs` + `build_message`, no send) lists all 7 jobs as `✅ ok`, `jobs with no run today: []` — no false "DID NOT RUN". `report_job_status.py` itself unchanged.
+
 ### Next steps
 
 - **`Satış` group provisioning** — created empty 2026-08-27, needs members added when Arslan decides who.

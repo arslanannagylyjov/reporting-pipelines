@@ -230,6 +230,69 @@ Full stock/product catalog (pricing, supplier, physical dimensions, cost columns
 | Boy | double(14,2) | YES | |
 | Yukseklik | double(14,2) | YES | |
 
-**Cost-column note:** `FabrikaFiyatiUsd` (plus `Cns_Usd`/`Trk_Usd`) is a cost column, same category as `sales_snapshot`'s `FabrikaFiyati`/`FabrikaTutarUsd`. The Metabase question built on this table (`Stok Listesi`, card 103) exposes it as part of a deliberate full-detail placeholder. As of 2026-08-27 card 103 lives in the `3. İthalat/İhracat` collection and is therefore visible to `Director`, `Manager`, and `Sales/Purchase` (the cascade — see `docs/metabase-permissions.md`); Arslan explicitly accepted this cost-column exposure when it was moved out of the former Director+Manager-only `2. Manager` folder. Which columns to actually show is still a future decision, not made here.
+**Cost-column note:** `FabrikaFiyatiUsd` (plus `Cns_Usd`/`Trk_Usd`) is a cost column, same category as `sales_snapshot`'s `FabrikaFiyati`/`FabrikaTutarUsd`. The Metabase question built on this table (`01_Genel_StokListesi` — card 103, renamed from `Stok Listesi` on 2026-08-28) exposes it as part of a deliberate full-detail placeholder. As of 2026-08-27 card 103 lives in the `3. İthalat/İhracat` collection and is therefore visible to `Director`, `Manager`, and `Sales/Purchase` (the cascade — see `docs/metabase-permissions.md`); Arslan explicitly accepted this cost-column exposure when it was moved out of the former Director+Manager-only `2. Manager` folder. Which columns to actually show is still a future decision, not made here.
 
 Refreshed nightly at 03:45 by `refresh_stock_details.py`, registered in `monitored_jobs.yml` and covered by the 07:00 daily digest — see `docs/monitoring.md`.
+
+## `orders_in_transit`
+
+Orders placed but not yet received — the "Yolda" (in-transit) report for Cansun and Karacan, sourced from the pre-built ERP view `cansun.aa_rapor_yolda_hepsi` on Natra via `metabase_ro`. Despite the `cansun` schema prefix the view is meant to UNION Cansun + Karacan (distinguished by the `Firma` column); as of the 2026-08-27 initial sync it returns **1,852 rows, all `Firma = 'Cansun Yolda'`** — no Karacan rows are currently in "Yolda" status, not a pipeline bug. **Almer is deferred** — not in the view's UNION yet. When Almer is added, re-verify the `(Firma, ID)` primary key is still collision-free across all three companies before trusting the first sync (the ERP `ID` is only guaranteed unique within one company's document series; the pre-flight duplicate check in the sync script will abort rather than corrupt data if it isn't, but confirm deliberately).
+
+Full-replace-by-key table via chunked `REPLACE INTO` on `(Firma, ID)` — **no staging table** (that pattern is exclusive to `sales_snapshot`), and **`REPLACE INTO`, not `TRUNCATE` + `INSERT`**, because `reporting_writer`'s grant here is `SELECT, INSERT, UPDATE, DELETE` with no `DROP` (`TRUNCATE` requires it), same grant shape as `cek_senet_portfoy` / `supplier_last_purchase`. Column list is identical (name + order) on the source view and the destination table, so the sync selects an explicit column list, not `SELECT *`.
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| Firma | varchar(13) | NO | PRI |
+| ID | int | NO | PRI |
+| EvrakNo | varchar(20) | YES | |
+| HesapKodu | varchar(20) | YES | |
+| HesapAciklamasi | text | YES | |
+| StokKodu | varchar(30) | YES | |
+| StokAciklamasi | text | YES | |
+| Miktar | double(20,6) | YES | |
+| DovizKodu | varchar(20) | YES | |
+| DovizKuru | double(14,6) | YES | |
+| DovizFiyat | double(20,6) | YES | |
+| DovizTutar | double(20,6) | YES | |
+| BelgeTarihi | date | YES | |
+| TerminTarihi | date | YES | |
+| Kargo | varchar(30) | YES | |
+| Aciklama1 | varchar(100) | YES | |
+| Aciklama2 | varchar(100) | YES | |
+| Aciklama3 | varchar(100) | YES | |
+| Aciklama4 | varchar(100) | YES | |
+| EvrakTutari | double(20,6) | YES | |
+
+Composite primary key on `(Firma, ID)` — one row per order line per company. Verified collision-free live before the first sync: 1,852 source rows / 1,852 distinct `(Firma, ID)` pairs.
+
+**Prune-on-sync (built in from day one, not retrofitted):** `REPLACE INTO` only ever adds or updates keys present in the current ERP fetch — it never removes a row on its own. An order can drop out of "Yolda" status (its `SiparisDurumu` / `Kalan` changes once it's received) and disappear from the source view **without ever reappearing under the same `ID`** — the exact voided/reissued-document staleness pattern that bit `sales_snapshot`. So `refresh_orders_in_transit.py` runs an explicit prune immediately after the upsert: it reads back every `(Firma, ID)` currently in `orders_in_transit`, subtracts the set of keys this run pulled (held in one shared in-memory variable — never re-queried from a second source call that could drift from the fetch), and `DELETE`s the difference in chunks. Confirmed live: a synthetic stale row (`ID = -999`) was pruned on the next run, and a clean re-run of unchanged data pruned 0 and left all 1,852 rows intact.
+
+Refreshed nightly at **03:05** by `refresh_orders_in_transit.py` — see `docs/monitoring.md` for the schedule reasoning, the mandatory pre-flight duplicate check, and the success/failure Telegram alerting. Backs the Metabase question **`03_Ithalat_YoldakiÜrünListesi`** (card 104, renamed from `Yoldaki Ürün Listesi` on 2026-08-28) in the `3. İthalat/İhracat` collection (id 10), which therefore inherits that folder's cascade (`Director`, `Manager`, `Sales/Purchase`, `Satış` — see `docs/metabase-permissions.md`); no group-level override was created. This table carries no cost column (`FabrikaFiyati`-style), so no boss-only exposure decision was needed.
+
+## `warehouse_stock`
+
+Per-product on-hand quantities across Cansun's two physical warehouses (Çatalca and Merkez), each split into a settled bucket and a goods-receiving ("Mal Kabul") bucket. Sourced from the ERP table `cansun.eryaz_zeus_stok_slim` on Natra via `metabase_ro` — itself a nightly full-truncate-and-reload table on the ERP side, so this pipeline mirrors that: no incremental logic, no history kept. **One row per `StokKodu`, no `Firma` dimension** — unlike almost every other table here, warehouse stock isn't a multi-company concept. 17,029 rows as of the 2026-08-28 initial sync (`COUNT(*) = COUNT(DISTINCT Code)` on the source, both 17,029 — PK-safe, no pre-flight duplicate check needed).
+
+Only 5 of the source's 7 columns are pulled. The two `İade` (return-goods) buckets — `QTY_230` (Çatalca İade) and `QTY_530` (Merkez İade) — are **excluded by design**, per Arslan; they're not needed for the intended reporting and adding them later just means widening both the `SELECT` and the destination table.
+
+**Column mapping** (source → destination):
+
+| ERP source (`eryaz_zeus_stok_slim`) | `warehouse_stock` | Meaning |
+|---|---|---|
+| `Code` | `StokKodu` | product code (PK) |
+| `QTY_200` | `Catalca` | Çatalca warehouse, settled stock |
+| `QTY_210` | `CatalcaMalKabul` | Çatalca, in goods-receiving |
+| `QTY_500` | `Merkez` | Merkez warehouse, settled stock |
+| `QTY_510` | `MerkezMalKabul` | Merkez, in goods-receiving |
+
+| Column | Type | Null | Key |
+|---|---|---|---|
+| StokKodu | varchar(255) | NO | PRI |
+| Catalca | int | YES | |
+| CatalcaMalKabul | int | YES | |
+| Merkez | int | YES | |
+| MerkezMalKabul | int | YES | |
+
+**Full-replace pattern:** each run does an unconditional `DELETE FROM warehouse_stock` then a chunked `INSERT` (`CHUNK_SIZE = 5000`, matching `customer_last_price`). Not a composite-key `REPLACE INTO` — there's no `Firma` dimension and the ERP source is itself a nightly full-rebuild, so a plain wipe-and-reload is the honest match. **`DELETE`, not `TRUNCATE`:** the task spec called for `TRUNCATE`, but `reporting_writer`'s grant on this table is `SELECT, INSERT, UPDATE, DELETE` with no `DROP` (confirmed via `SHOW GRANTS`), and `TRUNCATE` requires `DROP` in MySQL — same substitution already made for `cek_senet_portfoy` / `vault_movements_daily`. Same end state for a full-replace table. No staging table, no prune step (a full wipe every run makes both moot).
+
+Refreshed nightly at **03:10** by `refresh_warehouse_stock.py` — see `docs/monitoring.md` for the schedule reasoning and the success/failure Telegram alerting. Visible to Metabase as table id 20 in `reporting-db` (schema rescan triggered 2026-08-28); **no question built yet** — report shape is a follow-up from Arslan.
