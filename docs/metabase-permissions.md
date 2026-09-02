@@ -20,7 +20,7 @@ is the current authority). `User` was renamed to `Other`, and a new
 | **Manager** | 8 | Added 2026-08-25. Cascade read: `2. Manager` + `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`2. Manager` only" on 2026-08-27). One real member — Nursiman (also a `Sales/Purchase` member). `2. Manager` is currently empty (its only content, `01_Genel_StokListesi` (card 103, renamed from `Stok Listesi` on 2026-08-28), moved to `3. İthalat/İhracat` on 2026-08-27). |
 | **Sales/Purchase** | 7 | Added 2026-08-13. Cascade read: `3. İthalat/İhracat` + `4. Satış` + `5. Envanter Yönetimi` (expanded from "`3.` only" on 2026-08-27). Ten real members as of 2026-08-24 — Sales/Purchase #1 through #10. As of 2026-08-27 this group can see `01_Genel_StokListesi` (card 103, renamed from `Stok Listesi` on 2026-08-28) and its `FabrikaFiyatiUsd`/`Cns_Usd`/`Trk_Usd` cost columns — a deliberate reversal of the prior Director+Manager-only scoping, confirmed by Arslan. |
 | **Satış** | 9 | Added 2026-08-27. Cascade read: `4. Satış` + `5. Envanter Yönetimi`. Zero members — provisioning pending. |
-| **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `5. Envanter Yönetimi` only (bottom of the cascade; was `4. Diğer`, renamed+renumbered 2026-08-27), which is currently empty. No real members yet. |
+| **Other** | 6 | Renamed from `User` on 2026-08-13. Read access to `5. Envanter Yönetimi` only (bottom of the cascade; was `4. Diğer`, renamed+renumbered 2026-08-27). As of 2026-09-02 that folder holds one question — `01_Üretim_MinMaxStok` (card 106) — so `Other` (and every group above it in the cascade) can now see it. No real members yet. |
 
 ## Why this exists
 
@@ -761,3 +761,11 @@ The cost-column exposure story for card 103 (`01_Genel_StokListesi`) is unaffect
 New native question `SELECT * FROM supplier_orders_pending` (table visualization), backing the `supplier_orders_pending` sync pipeline added the same day (see `docs/tables.md` / `docs/monitoring.md`). Created directly in collection 10 (`3. İthalat/İhracat`) — **no permission-graph change, no new group, no GRANTs, no collection move.** It inherits folder 10's existing cascade exposure (`Director`, `Manager`, `Sales/Purchase`, `Satış`), same as its siblings 56 / 57 / 103 / 104. The table carries no cost column, so no boss-only exposure question applied.
 
 Verified via `GET /api/card/105`: `collection_id: 10`, `query_type: native`, `archived: false`, 16 result columns matching the `supplier_orders_pending` table. Collection graph left at revision 16 (unchanged from the 2026-08-27 reorg).
+
+## `01_Üretim_MinMaxStok` (card 106) added to `5. Envanter Yönetimi` (2026-09-02)
+
+New native question `SELECT * FROM product_min_max_stock` (table visualization), backing the `product_min_max_stock` sync pipeline added the same day (see `docs/tables.md` / `docs/monitoring.md`). Created directly in collection 11 (`5. Envanter Yönetimi`), which was **previously empty** — this is its first content. **No permission-graph change, no new group, no GRANTs, no collection move.**
+
+Folder 5 is the **bottom of the cascade**, so every group can read it — `Director`, `Manager`, `Sales/Purchase`, `Satış` *and* `Other`. That means `01_Üretim_MinMaxStok` is visible to every non-admin group, which is the intended exposure for a min/max stocking report (no cost column, no boss-only concern). No group-level override was created — this is pure cascade inheritance.
+
+Verified via `GET /api/card/106` and `POST /api/card/106/query`: `collection_id: 11`, `query_type: native`, `archived: false`, query returns 1,078 rows / 7 columns. Collection graph left at revision 16 (unchanged).

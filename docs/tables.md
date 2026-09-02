@@ -327,3 +327,28 @@ Three source columns are aliased with a space in the name in the ERP view — ``
 Composite primary key on `(Firma, ID)` — one row per request line per company.
 
 Refreshed nightly at **03:20** by `refresh_supplier_orders_pending.py` — see `docs/monitoring.md` for the schedule reasoning and the failure-only Telegram alerting. Backs the Metabase question **`03_Ithalat_SiparişteÜrünListesi`** (card 105) in the `3. İthalat/İhracat` collection (id 10), a native `SELECT * FROM supplier_orders_pending`, which therefore inherits that folder's cascade (`Director`, `Manager`, `Sales/Purchase`, `Satış` — see `docs/metabase-permissions.md`); no group-level override was created. This table carries no cost column (`FabrikaFiyati`-style), so no boss-only exposure decision was needed.
+
+## `product_min_max_stock`
+
+Per-product min / max / total monthly demand over a rolling 6-month window, alongside current on-hand quantity — the input to a slow-mover / min-max stocking report. **Aggregate table, one row per product** (`ProductId`), not a transaction log — 1,078 rows as of the 2026-09-02 initial sync. Sourced from the pre-built ERP view `cansun.aa_product_min_max_stock` on Natra via `metabase_ro`; the view itself aggregates over an upstream monthly-per-product view, so the `SELECT` against it takes ~11–12s (all of this job's runtime — the local write is sub-second).
+
+| Column | Type | Null | Key | Meaning |
+|---|---|---|---|---|
+| ProductId | varchar(30) | NO | PRI | product code |
+| ProductName | varchar(200) | YES | | |
+| MinMonthlyQty | decimal(23,6) | YES | | lowest monthly demand in the window |
+| MaxMonthlyQty | decimal(23,6) | YES | | highest monthly demand in the window |
+| Total6mQty | decimal(23,6) | YES | | total demand over the 6-month window |
+| AvgPerMonthQty | bigint unsigned | YES | | average monthly demand (pre-rounded on the ERP side) |
+| QuantityInStorage | int | YES | | current on-hand quantity |
+
+`QuantityInStorage` is `bigint` on the ERP view side, narrowed to `int` here — a safe, intentional mismatch (on-hand counts, small values), same category as `customer_last_price`'s `FaturaD_ID`.
+
+**Load pattern — `DELETE` + chunked `INSERT` in a single transaction, one commit at the end**, not incremental. This is an aggregate snapshot with no rolling-window staleness to prune, so a full wipe-and-reload is the honest match (same as `customer_last_price`). Two deviations from the spec's literal wording, both deliberate:
+
+- **`DELETE FROM`, not `TRUNCATE`.** `reporting_writer` has `SELECT, INSERT, UPDATE, DELETE` but no `DROP` on this table (`SHOW GRANTS`), and MySQL `TRUNCATE` requires `DROP` — same substitution as `cek_senet_portfoy` / `warehouse_stock`. Separately, `TRUNCATE` is DDL: it forces an implicit commit and **cannot be inside a transaction**, so the spec's own requirement ("single transaction so a mid-run failure never leaves the table empty for readers") is only achievable with `DELETE`.
+- **Single transaction, single commit.** The `DELETE` and every `INSERT` batch run in one uncommitted transaction; a mid-run failure rolls back and Metabase keeps seeing the previous 1,078 rows until the new set commits atomically. (Contrast `customer_last_price`, which commits per batch and can briefly expose a partial table.)
+
+**Pre-write sanity check (before the `DELETE`):** the job aborts — leaving the table untouched — if the ERP pull returns 0 rows, or if the row count is under 50% of the previous successful run's count recorded in `job_runs.csv`. A reload pattern has no prune-step equivalent to catch an upstream view silently breaking (e.g. the monthly-per-product view erroring to empty), so this guard is the only thing standing between "view broke" and "report table wiped." Same protective intent as `cek_senet_portfoy`'s pre-flight duplicate check, adapted from an upsert to a reload. On the first run there is no previous count, so only the empty check applies.
+
+Refreshed nightly at **03:25** by `refresh_product_min_max_stock.py` — see `docs/monitoring.md` for the schedule reasoning and the failure-only Telegram alerting. Backs the Metabase question **`01_Üretim_MinMaxStok`** (card 106) in the `5. Envanter Yönetimi` collection (id 11), a native `SELECT * FROM product_min_max_stock`. Folder 5 is the bottom of the permission cascade, so this question is visible to every group (`Director`, `Manager`, `Sales/Purchase`, `Satış`, `Other` — see `docs/metabase-permissions.md`); no group-level override was created. No cost column, so no boss-only exposure decision was needed.
