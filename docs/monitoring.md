@@ -62,6 +62,8 @@ jobs:
 
 `product_min_max_stock` (`expected_time: "03:25"`) added 2026-09-02, at 03:25 — the tight 5-minute gap between `supplier_orders_pending` (03:20) and `vault_movements_daily` (03:30). Checked against real `job_runs.csv` data, not assumed: `supplier_orders_pending`'s 03:20 cron run finishes by ~03:20:01, and `vault_movements_daily` at 03:30 takes ~0.25s. This job's own measured runtime is **~11s** — nearly all of it the ERP aggregate view query, not the local write — so a 03:25 start clears by ~03:25:12, well before 03:30. Still worth reconfirming once a few real 03:25 cron cycles exist (the ERP view time could grow). **The daily digest now covers nine jobs.**
 
+`bank_movements` (`expected_time: "03:35"`) added 2026-09-04, at 03:35 — after `product_min_max_stock` (03:25) and the monthly-only `bump_filter_defaults` (03:30), with margin before `stock_details` (03:45). Checked against real `job_runs.csv` data, not assumed: `product_min_max_stock`'s 03:25 run clears by ~03:25:13, `vault_movements_daily` at 03:30 takes ~0.25s, and `bump_filter_defaults` only runs on the 1st of the month. This job's own measured runtime is **~1.7s** across four test runs (1.71 / 1.75 / 1.73 / 1.73s) — the ERP `SELECT` on the 3-way `UNION ALL` view is sub-second, the rest is the local `DELETE` + `INSERT` of 15,450 rows — so a 03:35 start clears by ~03:35:02, well before 03:45. Worth reconfirming once a few real 03:35 cron cycles exist. **The daily digest now covers ten jobs.**
+
 `report_job_status.py` reads this file and loops over `jobs` — it never
 hardcodes a job name. `name` **must** match the `job_name` string the script
 passes to `run_job()` (see below), since that's the join key between the
@@ -97,17 +99,17 @@ cron log (`refresh.log` etc.) exactly as before; the structured log is
 additive, not a replacement for that.
 
 Every sync script calls `job_logging.run_job()` the same way, regardless of
-cadence — logging to `job_runs.csv` is universal (14 distinct `job_name`s
-write to it as of 2026-09-02, `product_min_max_stock` being the newest — an
+cadence — logging to `job_runs.csv` is universal (15 distinct `job_name`s
+write to it as of 2026-09-04, `bank_movements` being the newest — an
 earlier version of this line said "13 as of 2026-08-28" but that count
-included the CSV header row; the real 08-28 figure was 12). **Nine** jobs
+included the CSV header row; the real 08-28 figure was 12). **Ten** jobs
 are listed in `monitored_jobs.yml` and covered by the 07:00 digest below, in
 run order: `sales_snapshot` (02:30), `customer_last_price` (02:45),
 `supplier_last_purchase` (03:00), `orders_in_transit` (03:05),
 `warehouse_stock` (03:10), `cheque_bond_maturity` (03:15),
 `supplier_orders_pending` (03:20), `product_min_max_stock` (03:25),
-`stock_details` (03:45). All nine are nightly and complete before 07:00, so
-the digest can honestly report on them.
+`bank_movements` (03:35), `stock_details` (03:45). All ten are nightly and
+complete before 07:00, so the digest can honestly report on them.
 
 The remaining jobs deliberately are **not** in that registry: the intraday
 syncs `vault_status` (hourly), `vault_movements_hourly` (hourly),
@@ -145,10 +147,10 @@ if __name__ == '__main__':
     run_job('sales_snapshot', main)  # or 'customer_last_price', 'supplier_last_purchase', 'cheque_bond_maturity', 'stock_details'
 ```
 
-The other four registry jobs — `orders_in_transit`, `warehouse_stock`,
-`supplier_orders_pending` and `product_min_max_stock` — keep a thin
-`try`/`except` around `run_job()` so they can still fire an **immediate
-failure** Telegram alert (they have no success ping):
+The other five registry jobs — `orders_in_transit`, `warehouse_stock`,
+`supplier_orders_pending`, `product_min_max_stock` and `bank_movements` —
+keep a thin `try`/`except` around `run_job()` so they can still fire an
+**immediate failure** Telegram alert (they have no success ping):
 
 ```python
 if __name__ == '__main__':
@@ -970,3 +972,82 @@ bottom of the cascade, so the question is visible to every group.
 - Card 106 confirmed via `GET /api/card/106` and `POST /api/card/106/query`:
   `collection_id: 11`, `query_type: native`, not archived, returns 1,078
   rows / 7 columns.
+
+## `refresh_bank_movements.py` — nightly bank-movements 3-way sync (2026-09-04)
+
+Lives on athena in `~/reporting-scripts/refresh_bank_movements.py` (not in
+this repo), same `.env` / connection-handling convention as every other sync
+script. Syncs `reporting.bank_movements` (15,450 rows on first sync — full
+history, one row per bank-movement line per company, see `docs/tables.md`)
+from the ERP view `cansun.aa_bank_movements`, a 3-way `UNION ALL` of the
+Cansun / Almer / Karacan bank-movement tables. The **15th** distinct
+`job_name` in the shared `job_runs.csv` schema, the **10th** job in
+`monitored_jobs.yml`.
+
+Cron: `35 3 * * *` — nightly at 03:35, after `product_min_max_stock` (03:25)
+and the monthly-only `bump_filter_defaults` (03:30), with margin before
+`stock_details` (03:45). Checked against real `job_runs.csv` data before
+finalizing: `product_min_max_stock`'s 03:25 run clears by ~03:25:13,
+`vault_movements_daily` at 03:30 runs in ~0.25s, `bump_filter_defaults` only
+fires on the 1st. This job's measured runtime is **~1.7s** across four test
+runs (1.71 / 1.75 / 1.73 / 1.73s) — the ERP `SELECT` on the `UNION ALL` view
+is sub-second, the rest is the local `DELETE` + chunked `INSERT` of 15,450
+rows. A 03:35 start clears by ~03:35:02, comfortably before 03:45. **Worth
+reconfirming once a few real 03:35 cron cycles exist.**
+
+**athena timezone is fixed** (`timedatectl` → `Europe/Istanbul (+03)`), so
+`35 3 * * *` fires at 03:35 Istanbul wall-clock — same finding as the
+`orders_in_transit` / `product_min_max_stock` sections above.
+
+**Load pattern — `DELETE` + chunked `INSERT` (`CHUNK_SIZE = 5000`) in a
+single transaction, one commit at the end.** Full reload of the entire
+history every run — no prune step (an upstream edit to a movement line keeps
+its `(Firma, ID)` and is simply re-loaded). Two deliberate deviations from
+the spec's literal `TRUNCATE`, identical to `product_min_max_stock`:
+- `reporting_writer` has no `DROP` grant on this table (`SHOW GRANTS`), and
+  MySQL `TRUNCATE` requires it.
+- `TRUNCATE` is DDL — it forces an implicit commit and **cannot be part of a
+  transaction**. The spec's stated intent ("single transaction so a mid-run
+  failure never leaves the table empty for readers") is only achievable with
+  `DELETE`. The script opens the dest connection with `autocommit = False`,
+  runs the `DELETE` and all four `INSERT` batches, and commits **once** at
+  the end; any exception triggers `rollback()` and the table keeps its
+  previous 15,450 rows.
+
+**Pre-write sanity check (before the `DELETE`):** the job raises
+`RuntimeError` — leaving the table untouched — if the ERP pull returns 0
+rows, or if the row count is below 50% of the previous successful run's count
+read from `job_runs.csv` (most recent row where `job_name = bank_movements`
+and `status = ok`). A full reload has no prune-step equivalent, so a broken
+`UNION ALL` view silently returning few/zero rows would otherwise wipe the
+whole history table on every run with no signal. First run has no previous
+count → only the empty check applies. The `RuntimeError` flows through
+`run_job` (`status=fail` in `job_runs.csv`) and the `__main__` handler
+(`[bank_movements] FAILED: …` Telegram, exit 1).
+
+**Telegram — failure only, in the 07:00 digest from day one.** No per-run
+success ping. Thin `try`/`except` around `run_job('bank_movements', main)`
+fires `[bank_movements] FAILED: <ExceptionType>: <msg>` on any crash —
+including the pre-write sanity aborts. Same bot (`@cansun_reporting_bot`,
+`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` from the same `.env`).
+
+**Metabase:** none yet — no card, dashboard, or permission work. That's a
+separate follow-up task once this pipeline is live and verified.
+
+**Verified (2026-09-04):**
+- First manual run: fetched 15,450 rows (Cansun 10,752 / Almer 4,006 /
+  Karacan 692), `DELETE` (0 rows) + `INSERT` 15,450 in one committed
+  transaction, `status=ok` (`rows=15450`, `1.71s`) in `job_runs.csv`. No
+  Telegram.
+- Second run: exercised the drop-check with a real previous count (15,450 →
+  15,450, threshold 7,725, no abort), `DELETE` 15,450 + `INSERT` 15,450,
+  `ok` in 1.75s.
+- Drop-check abort path: with a synthetic previous count of 99,999 injected
+  into `job_runs.csv`, the run aborted with exit 1 **before** the `DELETE`
+  — dest table stayed at 15,450 rows, `job_runs.csv` logged `fail` with the
+  `RuntimeError` message, and the `[bank_movements] FAILED: …` Telegram
+  fired (confirming the alert path end-to-end). `job_runs.csv` restored from
+  a pre-test backup afterward, then one clean run re-logged `ok`.
+- `report_job_status.py` dry run lists
+  `✅ bank_movements: ok — 15450 rows in 1.73s`, no false "DID NOT RUN"; all
+  10 registry jobs resolve to a logged run.
