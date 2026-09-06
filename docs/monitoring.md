@@ -1051,3 +1051,54 @@ separate follow-up task once this pipeline is live and verified.
 - `report_job_status.py` dry run lists
   `✅ bank_movements: ok — 15450 rows in 1.73s`, no false "DID NOT RUN"; all
   10 registry jobs resolve to a logged run.
+
+## Dashboard 3 "Çek Takip" + "Ay filter" staleness — diagnosed 2026-09-07
+
+Two separate reports about dashboard 3 (`Cansun Satış Genel Bakış`) showing
+stale months in September. Findings so the next month-boundary doesn't
+re-trigger a from-scratch diagnosis:
+
+**"Ay filter didn't advance to 9 on Günlük/Haftalık" — NOT a bug, no fix
+applied.** `bump_filter_defaults.py` ran on schedule 2026-09-01 03:30:06
+(`job_runs.csv`: `filter_defaults_bump,ok,10,5.17`; `bump_filter_defaults.log`
+shows all 9 cards + the Yıl/Ay dashboard filters set to `2026`/`9`; dashboard
+revision history shows `metabase-filter-defaults-cron … changed the filters`
+at that timestamp). Live `GET /api/dashboard/3` confirms `Ay` default `= "9"`,
+`Yıl` default `= "2026"`. athena's clock is `Europe/Istanbul` (+03) — no
+UTC-vs-local drift; the `30 3 1 * *` cron fired at 03:30 local as intended.
+A **fresh** browser load of the Günlük/Haftalık tab (localStorage cleared, no
+`?ay=` in the URL) resolves to `?ay=9&tarih=thisyear&yıl=2026` and the cards
+render September data. **Root cause of the report:** a stale URL — a
+bookmark, pinned tab, or restored session carrying `?ay=8` from August.
+Metabase URL params override the saved default, so that link keeps showing
+August until the `?ay=8` is dropped. Nothing to fix server-side; if it
+recurs, tell the viewer to open the dashboard from a clean link (or re-save
+the bookmark without the `?ay=`/`?tarih=` query string).
+
+**"Çek Takip" tab month tiles stuck on August — real bug, fixed 2026-09-07.**
+The tab's top bar chart (`Aylara Göre Toplam Tutar`, card 79) was always
+fine — it builds its month range from `CURDATE()` and rolls automatically.
+The problem was the 7 per-month day-calendar tables below it (cards `72`–`78`):
+each had its month **hardcoded** as a literal (`DATE(CONCAT('2026-8','-01'))`,
+`'2026-9'`, … `'2027-2'`), built once on 2026-08-20 (see
+`docs/metabase-permissions.md`, "`Takip` rebuilt with a date-driven range")
+with **no automation** — `bump_filter_defaults.py` only ever touched cards
+80–88, never these. So they stayed on Ağustos 2026 – Şubat 2027 while the
+calendar moved on. **Fix (Metabase-only, no new cron):** rewrote all 7 so
+each computes its month as `DATE(DATE_FORMAT(CURDATE(), '%Y-%m-01') + INTERVAL
+N MONTH)` for a fixed offset `N` = 0…6, and renamed them from absolute months
+to relative labels — `Takip — Bu Ay` (N=0), `Takip — Gelecek Ay` (N=1),
+`Takip — 2 Ay Sonra` … `Takip — 6 Ay Sonra` (N=6). They now roll forward on
+their own every month, **zero maintenance, nothing to fail**. A first column
+`Ay` (`CONCAT(ELT(MONTH(...), 'Ocak',…,'Aralık'), ' ', YEAR(...))` →
+"Eylül 2026") carries the absolute month since the tile title no longer does;
+the old `HaftaGunu` raw-weekday column was dropped to keep the half-width
+tile at 4 columns (no horizontal scroll) — `TatilDurumu` already flags
+weekends. `DATE(...)` wrapper is load-bearing: without it the recursive-CTE
+anchor is a string and Metabase ignores the `D/M/YYYY` date formatting on
+`Vade Tarihi`. Conditional formatting (red→green range on `ToplamTutar`) and
+the date style were preserved on every card. Verified live on a fresh tab:
+tiles read Eylül 2026 → Mart 2027, matching the bar chart; current
+`MAX(VadeTarihi)` = 2027-03-19. No dashboard-structure change — only cards
+72–78's own `dataset_query` / `visualization_settings` / `name` were
+`PUT`, never `/api/dashboard/3/cards`.
