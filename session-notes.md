@@ -465,12 +465,12 @@ Six Metabase-only tasks, all through the REST API (API key read from athena's `.
 
 **Backups (outside the repo):** `~/metabase-backups/2026-09-24/` — top level = the first task (cards 50/51/54 + dashboard 3 before the tab-5 rework); `run2` (card 50 + dashboard 3, tab-5 filters), `run3` (cards 52/53 + dashboard 3, Coğrafya work + new card ids), `run4` (card 54), `run5` (card 57), `run6` (the 16 cards fixed in the instance-wide pass). Restore = `PUT /api/card/:id` with `{dataset_query}` (or `{parameters}` for 57) / `PUT /api/dashboard/3` with `{parameters, dashcards, tabs}`.
 
-**Docs:** this entry, plus the new Field-Filter SQL rules in `docs/adding-a-new-report.md` step 10. The repo has no gotchas/known-issues section, so no third place was added. `docs/metabase-permissions.md` / `docs/tables.md` were **not** updated for cards 110–114 or the dashboard-3 tab changes — no collection or permission change was made, but they don't yet list the new cards.
+**Docs:** this entry, plus the new Field-Filter SQL rules in `docs/adding-a-new-report.md` step 10. The repo has no gotchas/known-issues section, so no third place was added. `docs/metabase-permissions.md` / `docs/tables.md` were not changed — see the resolved note under Next steps.
 
 ### Next steps
 
 - **Inconsistent `Ulke` values** in `sales_snapshot` (source data / sync, not touched): the same country appears under two spellings (`BULGARIA` vs `Bulgaristan`, `Gurcistan` without diacritics), so card 111 splits one country across two bars. Needs normalisation at source or in the sync.
 - **Card 50's 2,000-row display cap** — the full ranking is only visible via export; decide whether that's acceptable or whether to reintroduce a limit or a paging approach.
 - Cards 110/111 (donut labels, all-countries bar) were verified through the API only, not visually.
-- Decide whether cards 110–114 and the tab changes should also be listed in `docs/metabase-permissions.md` / `docs/tables.md`.
+- Docs open item resolved (not applicable): no tables or permissions changed, and neither `docs/metabase-permissions.md` (a dated log of permission/placement decisions) nor `docs/tables.md` (per-table sections) inventories dashboard cards per collection, so cards 110–114 are recorded only here.
 - Everything listed under the previous "Next steps" is unchanged/open.
