@@ -183,6 +183,26 @@ Filter" mapped to the relevant column, matching filter widget type (e.g.
 "String contains"), and matching "single value" vs. "multiple values"
 setting — consistency here matters more than any individual choice.
 
+**Field-filter SQL rules** (learned 2026-09-24, when 17 dashboard cards were
+found returning the *opposite* of the selected Firma — see `session-notes.md`).
+Copy an existing card's tag *configuration*, but check how its SQL *uses* the
+tag rather than copying that blindly:
+
+- A Field Filter tag must be a **standalone condition**: `[[AND {{tag}}]]` or
+  `WHERE {{tag}}`. **Never `col = {{tag}}`** — Metabase renders the tag as the
+  whole condition, so it becomes `col = (table.col = 'X')`, which is true for
+  every row *except* the selection. It raises no error and an empty filter
+  still looks correct, so the bug is silent.
+- **Never alias the table a Field Filter targets** (`FROM sales_snapshot s`):
+  the filter renders as `table.col`, which an alias breaks ("Unknown column").
+- **Text / Number variables (not Field Filters) are the exception** —
+  `col = {{tag}}` is correct for those.
+- **Verify every filter against ground-truth SQL, not row counts.** Rewrite the
+  card's own SQL with each tag replaced by a literal condition and compare:
+  single values, multi-select combinations, and check that the single-value
+  totals sum to the empty-filter total. Compare totals with a SQL `SUM`/`COUNT`
+  around the query — the result grid is capped at 2,000 rows.
+
 Name it to match the existing naming convention in the target collection
 (language, capitalization, level of formality).
 
